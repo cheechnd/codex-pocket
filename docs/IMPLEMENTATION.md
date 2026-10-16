@@ -1,0 +1,89 @@
+# Implementation and verification evidence
+
+Codex Pocket is a working web app built around an existing Codex shared daemon.
+Earlier milestones and the [original feasibility experiment](POC-EVIDENCE.md)
+led to the implementation below. This document describes observed behavior;
+experimental protocol compatibility is not a promise for every daemon version.
+
+## Delivered behavior
+
+- Explicit Unix-WebSocket daemon connection, initialization, bounded requests,
+  capability checks, disconnect cleanup, and capped reconnection backoff.
+- Loaded conversation picker and metadata-only saved conversation browsing with
+  search and pagination. Opening a saved conversation is an explicit ID-only
+  resume that does not override policy, model, instructions, or working directory.
+- Bounded paginated history and SSE notifications that trigger authoritative
+  history reads. Turn/item IDs reconcile partial and completed representations.
+- Exact text and image submission, client-ID deduplication, serialized writes,
+  and unknown-outcome reconciliation without blind retries.
+- Explicit expected-turn-ID steering for active follow-ups and async question
+  replies. Stale or ended targets reject without falling back to a new turn.
+- Blocking interactive requests remain visible and unanswered; required approvals
+  and blocking questions are handled through the CLI.
+- Loopback HTTP with exact Host/Origin checks, CSRF-protected writes, private API
+  and SSE access, one-use pairing, encrypted session cookies, and revocation.
+- Private phone access through an independently configured Tailscale Serve route.
+- Validated and metadata-stripped private image storage, bounded capacity, and
+  authenticated retrieval of app-owned attachments only.
+- Mobile/desktop layouts, safe Markdown rendering, message copy, memory-only
+  per-thread drafts, browser Back/Forward, and foreground/reload reconciliation.
+- Per-browser unread completion markers retain only bounded thread/turn IDs.
+
+## Automated verification
+
+The mock transport/API suite covers connection failures and stale responses,
+concurrent submissions and deduplication, timeout/disconnect ambiguity, invalid
+thread/turn targets, active follow-ups, async replies, policy preservation,
+blocked requests, saved listing/opening, image validation/storage, pairing,
+revocation, Host/Origin/CSRF checks, and SSE lifecycle.
+
+Chromium browser checks use an isolated mock daemon and cover rendering,
+Markdown safety, exact submit/copy behavior, images and draft retention,
+pagination, saved-thread opening/search, reconnect/reload, navigation,
+reader position, long-title layouts, keyboard viewport geometry, touch controls,
+working indicators, and completion receipts.
+
+Run the commands in README.md. Synthetic keyboard/layout checks do not establish
+native iPhone selection, status-bar compositing, or every lifecycle behavior.
+
+## Opt-in live evidence
+
+Disposable scratch conversations on the selected existing daemon verified:
+
+- Browser → open CLI → browser sequential messages in the same thread.
+- Browser reload during an accepted turn, without a duplicate submission.
+- Closing Pocket leaves the independent CLI/daemon connection usable.
+- Screenshot submission through app-owned localImage paths and authenticated
+  retrieval after reopening history.
+- Saved metadata browsing without activation, followed by explicit ID-only open.
+- Async question discovery and exact-turn reply acceptance while work continues.
+- Ordinary non-question follow-up consumption in the same active turn, including
+  exact text whitespace and client-ID correlation.
+
+These tests used daemon 0.163.0 and CLI 0.160.1. Live test scripts are opt-in,
+create new disposable threads, and must not be pointed at existing user work.
+Credentials, transcripts, generated protocol schemas, test screenshots/reports,
+session state, socket dumps, and real device/thread identifiers are not shipped.
+
+## Physical phone evidence
+
+Phone messaging, screenshot input, and active async replies have been exercised.
+The command-mark Home Screen icon was confirmed in an iPhone screenshot after
+embedding the opaque PNG in the HTML head and opening a fresh query URL. A
+separate public icon URL had still produced the fallback letter after re-addition.
+The exact browser/OS and relative contribution of embedding/cache refresh were
+not isolated; a particular OS loader bug is not established.
+
+Text selection may highlight a word without native drag handles. The whole-message
+Copy control works. The cause remains unresolved. Earlier attempts to change
+status-bar underlap/document scrolling caused keyboard regressions and were
+rolled back; keep current stable viewport handling unless phone tests justify
+another change.
+
+## Limits
+
+One device submits at a time; status prechecks do not provide atomic exclusion
+against CLI submissions. The in-memory outcome ledger expires after an hour or
+restart. Blocking approval routing has not been verified for every request type.
+Offline sends, push notifications, durable outcome history, and unattended startup
+are not implemented. See README.md and SPEC.md for operating constraints.

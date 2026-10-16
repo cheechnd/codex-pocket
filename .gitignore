@@ -1,0 +1,24 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+poc/sandbox/
+poc/verification.json
+.local/
+
+playwright-report/
+test-results/
+
+# Local credentials, signing material, and developer scratch exports
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.sqlite
+*.sqlite3
+*.db
+*.core

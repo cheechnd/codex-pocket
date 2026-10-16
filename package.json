@@ -1,0 +1,41 @@
+{
+  "name": "codex-pocket",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local mobile-first companion for an existing Codex shared daemon",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "poc:list": "node poc/client.mjs loaded",
+    "poc:watch": "node poc/client.mjs watch",
+    "poc:send": "node poc/client.mjs send",
+    "poc:verify": "node poc/verify.mjs",
+    "check": "tsc --noEmit && node --check src/web/app.js && node --check src/web/markdown.js && node --check poc/client.mjs && node --check poc/verify.mjs && node --check scripts/pocket.mjs",
+    "build": "tsc && mkdir -p dist/src/web && cp src/web/index.html src/web/style.css src/web/apple-touch-icon.png dist/src/web/ && esbuild src/web/app.js --bundle --format=esm --target=es2022 --minify --outfile=dist/src/web/app.js",
+    "start": "node dist/src/server/main.js",
+    "dev": "tsx src/server/main.ts",
+    "test": "tsx --test test/*.test.ts",
+    "test:browser": "playwright test",
+    "test:live": "tsx test/live.ts",
+    "pair": "tsx src/server/pair.ts",
+    "pocket:start": "node scripts/pocket.mjs start",
+    "pocket:stop": "node scripts/pocket.mjs stop",
+    "pocket:status": "node scripts/pocket.mjs status"
+  },
+  "dependencies": {
+    "iron-session": "^9.0.1",
+    "markdown-it": "^15.0.3",
+    "sharp": "^0.35.5",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

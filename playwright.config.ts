@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: './test', workers: 1, testMatch: '*.spec.ts', use: { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }, baseURL: 'http://127.0.0.1:44318', viewport: { width: 390, height: 844 } }, webServer: { command: 'npm run build && npx tsx test/browser-server.ts', url: 'http://127.0.0.1:44318/healthz', reuseExistingServer: false }, reporter: 'list', outputDir: '.local/browser-results' });
