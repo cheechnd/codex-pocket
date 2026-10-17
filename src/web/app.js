@@ -538,7 +538,7 @@ $('logout').onclick = async () => {
 
 void bootstrap();
 
-let viewportFrame, appliedViewportHeight, appliedViewportTop;
+let viewportFrame, appliedViewportHeight, appliedViewportTop, rootScrollRecovery;
 let fullViewportHeight = Math.max(innerHeight, window.visualViewport?.height ?? 0), viewportWidth = window.visualViewport?.width ?? innerWidth;
 function fitViewport() {
   const viewport = window.visualViewport;
@@ -550,6 +550,19 @@ function fitViewport() {
   viewportWidth = viewport.width;
   const keyboardOpen = textFocused && fullViewportHeight - viewport.height > 120;
   document.documentElement.dataset.keyboard = keyboardOpen ? 'open' : 'closed';
+  // Rotation can leave the locked document scrolled by the status-bar inset.
+  // Recover the document itself, not just its painted shell. Never interfere with
+  // keyboard panning, pinch zoom, or scrolling inside the transcript.
+  const fullViewport = Math.abs(viewport.height - document.documentElement.clientHeight) <= 1;
+  if (matchMedia('(max-width:800px)').matches && !textFocused && fullViewport && (scrollX > 1 || scrollY > 1)) {
+    const recovery = `${viewport.width}/${viewport.height}/${scrollX}/${scrollY}`;
+    if (rootScrollRecovery !== recovery) {
+      rootScrollRecovery = recovery;
+      window.scrollTo(0, 0);
+      scheduleViewport();
+      return;
+    }
+  } else rootScrollRecovery = undefined;
   const follow = followLatest;
   if (selected && follow && (viewport.height !== appliedViewportHeight || viewport.offsetTop !== appliedViewportTop)) viewportFollowLock = true;
   appliedViewportHeight = viewport.height; appliedViewportTop = viewport.offsetTop;

@@ -87,3 +87,23 @@ against CLI submissions. The in-memory outcome ledger expires after an hour or
 restart. Blocking approval routing has not been verified for every request type.
 Offline sends, push notifications, durable outcome history, and unattended startup
 are not implemented. See README.md and SPEC.md for operating constraints.
+
+
+## Rotation and composer positioning
+
+A physical iPhone Home Screen layout report showed that returning to portrait
+could leave the outer document scrolled by the status-bar inset, despite normal
+page scale and text metrics. Compensating with CSS top left the visible composer
+and its tap target out of alignment.
+
+Viewport fitting now clears leftover outer document scroll in narrow layouts at
+normal scale, when no text field is focused and the visual viewport fills the
+layout height. It resamples after recovery and limits identical attempts to avoid
+loops if a browser refuses the reset. Transcript scroll, drafts, keyboard panning,
+and pinch zoom are preserved. Text-size adjustment is fixed at 100%, and Message
+and touch search inputs remain at 16px across layout breakpoints.
+
+Browser checks cover repeated touch rotation, composer taps and draft retention,
+actual outer-scroll recovery with preserved transcript position, keyboard-pan
+exclusion, and refused resets. The user confirmed the correction on the iPhone
+Home Screen app. The temporary metadata recorder used for diagnosis was removed.

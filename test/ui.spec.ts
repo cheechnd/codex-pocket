@@ -445,3 +445,77 @@ test('working follow-up captures the active turn and preserves draft when that t
   await expect(page.getByLabel('Message', { exact: true })).toHaveValue(text);
   await expect(page.locator('#submission-status')).toContainText('active turn changed');
 });
+
+
+test.describe('touch rotation', () => {
+  test.use({ hasTouch: true });
+  test('portrait landscape portrait preserves type sizing and composer tap focus', async ({ page }) => {
+    await routeHistory(page, id => history(id === 'thread-2' ? otherScratchThread : scratchThread, longTranscript(40)));
+    await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+    await expect(page.locator('#transcript')).toContainText('message 39');
+    const draft = page.getByLabel('Message', { exact: true });
+    for (const width of [390, 844, 390, 844, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 390 });
+      await expect.poll(() => draft.evaluate(el => getComputedStyle(el).fontSize)).toBe('16px');
+      await expect.poll(() => page.locator('#filter').evaluate(el => getComputedStyle(el).fontSize)).toBe('16px');
+      const box = (await draft.boundingBox())!;
+      const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      expect(await page.evaluate(point => document.elementFromPoint(point.x, point.y)?.id, point)).toBe('draft');
+      await page.touchscreen.tap(point.x, point.y);
+      await expect(draft).toBeFocused();
+      await page.keyboard.type('x');
+      await draft.blur();
+      expect(await page.locator('#transcript .bubble').last().evaluate(el => getComputedStyle(el).fontSize)).toBe(width === 390 ? '16px' : '15px');
+    }
+    await expect(draft).toHaveValue('xxxxx');
+    const viewportMeta = await page.locator('meta[name="viewport"]').getAttribute('content');
+    expect(viewportMeta).not.toMatch(/maximum-scale|user-scalable=no/);
+  });
+});
+
+test('recovers actual document scroll after rotation without resetting transcript position or keyboard pan', async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = Object.assign(new EventTarget(), { height: 812, width: 402, scale: 1 });
+    Object.defineProperty(viewport, 'offsetTop', { get: () => (window as any).__keyboardPan ?? window.scrollY });
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+    (window as any).__rotationViewport = viewport;
+  });
+  await page.setViewportSize({ width: 402, height: 812 });
+  await routeHistory(page, id => history(id === 'thread-2' ? otherScratchThread : scratchThread, longTranscript(40)));
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('#transcript')).toContainText('message 39');
+  const reader = page.locator('#message-scroll');
+  await reader.dispatchEvent('wheel', { deltaY: -200 });
+  await reader.evaluate(el => { el.scrollTop -= 200; });
+  await expect(page.locator('#new-content')).toBeVisible();
+  const readingTop = await reader.evaluate(el => el.scrollTop);
+  // Permit the root scroll that iOS creates despite a fixed body. It is separate
+  // from the transcript scroll and must be reset, not compensated with CSS top.
+  await page.evaluate(() => { const root = document.documentElement; root.style.setProperty('overflow-y', 'scroll', 'important'); const spacer = document.createElement('div'); spacer.style.height = '1000px'; spacer.style.pointerEvents = 'none'; root.append(spacer); });
+  await page.evaluate(() => window.scrollTo(0, 62));
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+  await expect.poll(() => page.locator('#app').evaluate(el => el.style.getPropertyValue('--app-top') || getComputedStyle(el).top)).toBe('0px');
+  expect(await reader.evaluate(el => el.scrollTop)).toBe(readingTop);
+  const draft = page.getByLabel('Message', { exact: true });
+  await draft.click(); await expect(draft).toBeFocused();
+  await page.evaluate(() => { (window as any).__keyboardPan = 396; const v = (window as any).__rotationViewport; v.height = 416; v.dispatchEvent(new Event('resize')); });
+  await expect(page.locator('html')).toHaveAttribute('data-keyboard', 'open');
+  await expect.poll(() => page.locator('#app').evaluate(el => getComputedStyle(el).top)).toBe('396px');
+  await page.evaluate(() => window.scrollTo(0, 62));
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  expect(await page.evaluate(() => scrollY)).toBe(62);
+});
+
+test('document-scroll recovery does not loop if the browser refuses the reset', async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = Object.assign(new EventTarget(), { height: 844, width: 390, offsetTop: 62, scale: 1 });
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => 62 });
+    (window as any).__scrollResets = 0;
+    window.scrollTo = () => { (window as any).__scrollResets++; };
+  });
+  await page.goto('/');
+  await expect.poll(() => page.evaluate(() => (window as any).__scrollResets)).toBe(1);
+  await page.evaluate(() => new Promise(resolve => { let frames = 20; const tick = () => { if (--frames) requestAnimationFrame(tick); else resolve(null); }; requestAnimationFrame(tick); }));
+  expect(await page.evaluate(() => (window as any).__scrollResets)).toBe(1);
+});
