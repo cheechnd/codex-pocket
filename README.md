@@ -1,15 +1,22 @@
 # Codex Pocket
 
-A private web companion for loaded and saved conversations in the existing Codex
-shared daemon. Reuses the daemon's login; never starts an app-server or reads
-OAuth credentials. Node 22.13+ is required.
+**Your Codex CLI conversations, on your phone.**
 
-Codex Pocket is a working mobile-first web app with paired private access,
-loaded and saved conversation browsing, streaming replies, Markdown, screenshot
-attachments, active-turn follow-ups, and a custom iPhone Home Screen icon.
-Phone messaging, screenshot input, and active async replies have been exercised.
-It uses experimental daemon APIs; compatibility and remaining limitations are
-listed below. This is an independent project, unaffiliated with OpenAI.
+Codex Pocket is a mobile-first web companion for **Codex CLI**. Start a coding
+session in the terminal on your computer, then pick up your phone or tablet to
+read replies, send follow-ups, and share screenshots. Return to the terminal
+and continue the same conversation; the CLI can stay connected throughout.
+
+Pocket runs on your development computer and connects to the existing Codex CLI
+shared daemon. It reuses that daemon's login without reading or copying OAuth
+credentials, starting another app-server, or requiring an API key.
+
+Features include paired private access, loaded and saved CLI conversation browsing,
+streaming replies, Markdown, screenshot attachments, active-turn follow-ups, and a
+custom iPhone Home Screen icon. Phone messaging, screenshot input, and active async
+replies have been exercised. Pocket uses experimental daemon APIs; compatibility
+and remaining limitations are listed below. This is an independent project,
+unaffiliated with OpenAI.
 
 The user confirmed that only one device submits at a time. Pocket checks the
 thread and turn status before sending, but this is not an atomic lock against the CLI.
@@ -20,6 +27,9 @@ the draft and asks you to send again. Pocket
 never queues unrelated messages, interrupts, or changes thread policies.
 
 ## Run locally
+
+Requires Node 22.13+ and an already running Codex CLI shared daemon on the same
+computer. Pocket connects to that daemon; the commands below do not start it.
 
 ```bash
 npm ci
