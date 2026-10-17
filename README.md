@@ -48,8 +48,8 @@ The Loaded view lists threads with a title or message preview, omitting blank
 session shells left by cancelled CLI startup/resume. It sorts and displays the
 daemon's conversation recency (falling back to update time if unavailable), attaches with no policy/model/instruction
 changes, and requests 50 items at a time. The browser retains at most 1,000 items and
-shows when that limit is reached. The iMessage-style interface uses a desktop sidebar and a compact mobile picker,
-blue sent-message bubbles, neutral replies, and system light/dark colors. The
+shows when that limit is reached. The interface uses a desktop sidebar and a compact mobile picker,
+slate-blue sent-message bubbles, plain-text replies, and system light/dark colors. The
 composer stays below a separately scrolling transcript. History is rendered as
 safe Markdown (bold, lists, links, quotes, tables and code) with copy controls. Raw HTML is displayed as text and Markdown image URLs never load automatically. Unpairing is in Settings. SSE signals trigger throttled authoritative history reads,
 including during generation, so partial and completed representations are merged
@@ -85,6 +85,19 @@ Blocking approval/question server requests are visible as **Needs action in Code
 unanswered. Pocket never sends generic RPC errors, fabricated answers, or approval
 decisions. Unknown interactive methods are treated the same way. CLI handling of
 all approval types still needs live verification before a phone-ready release.
+
+## Install in your browser
+
+On Chrome, open Pocket at its private HTTPS address and use the address-bar
+Install button or the browser's Install app menu item. The manifest supplies
+Pocket's name, existing command-mark icon, and a standalone app window. Chrome
+controls when it advertises installation; the button can depend on engagement
+and whether Pocket is already installed. Installation uses the same backend and
+browser pairing; it does not create another environment or Codex daemon.
+
+On iPhone/iPad, use Share → Add to Home Screen. The existing embedded Apple
+icon remains in the initial HTML. Browser installation does not add offline
+messaging, a service worker, or cached conversation data.
 
 ## Screenshots
 
@@ -136,19 +149,64 @@ out of Git. `POCKET_STATE_DIR` can select another application-owned private fold
 Codes are deliberately written to a private file instead of process logs or URLs.
 Do not use Tailscale Funnel. Pairing is independent of tailnet membership.
 
-The backend currently runs as a manually started background process, with PID
-metadata and logs under ignored `.local/`. It is not installed as a startup job;
-after reboot, rerun the start command. Serve's background route persists separately.
+## Install as a persistent user service
+
+For one installed instance, separate from source edits and test builds:
 
 ```bash
-npm run pocket:status
-npm run pocket:stop                 # verifies the owned process before signalling
-# Only if also removing Pocket's dedicated Serve route:
-tailscale serve --https=9443 off
+PUBLIC_ORIGIN="https://YOUR_HOST.YOUR_TAILNET.ts.net:9443" \
+CODEX_DAEMON_SOCKET="$HOME/.codex/app-server-control/app-server-control.sock" \
+npm run pocket:install
 ```
 
-Stop/revoke only when no phone test is in progress. The CLI/daemon are independent
-of the Pocket process. Never use `tailscale serve reset` to remove this app.
+This explicitly installs `codex-pocket.service` under your systemd user manager.
+It builds and checks a candidate before stopping an existing Pocket process, then
+starts the installed backend on the same loopback port. It never starts, restarts,
+or reconfigures the Codex daemon, Tailscale, or other services. Configure the
+existing private Serve route separately as above.
+
+The service starts with your user manager and restarts after crashes. To start it
+before login and keep it running after logout, your account needs systemd linger
+(`loginctl show-user "$USER" -p Linger`); the installer does not change that setting.
+The service pins the Node executable used for installation; retain that runtime.
+
+```bash
+pocket-update                       # snapshot source, install deps, check, test, build, switch
+pocket-rollback                     # switch back to the previous healthy release
+pocket-pair                         # issue a pairing code (prints to your terminal)
+systemctl --user status codex-pocket
+journalctl --user -u codex-pocket -n 50
+systemctl --user stop codex-pocket
+systemctl --user start codex-pocket
+```
+
+`npm run pocket:start|stop|status` also delegates to systemd once installed.
+`npm run pocket:update` and `npm run pocket:rollback` are equivalent to the commands
+above. Updates use the configured checkout's current files, including uncommitted
+edits; they do not fetch, commit, push, or deploy on every edit. One deployment runs
+at a time. Dependency installation, static checks, mock transport/API tests, and
+browser tests run in a candidate directory, leaving the running build untouched.
+Install Playwright Chromium before deployment (`npx playwright install chromium`),
+or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an existing Chromium executable.
+No live model tests run. Failed checks leave the running release alone; a failed
+restart/health check restores the previous release automatically. Rollback changes
+application code, not private state. Releases and check logs are retained for
+inspection; no automatic deletion of old releases or private data occurs.
+
+Installed files live under `~/.local/share/codex-pocket/`: `releases/`, `current`,
+`previous`, private `data/`, and check `logs/`. Machine-specific configuration is
+in `~/.config/codex-pocket/install.json`. Pairing and attachments move into `data/`
+on first installation, with symlinks at their original `.local/` paths. Keep those
+aliases: old daemon messages reference absolute attachment paths. Existing browser
+pairing is preserved. The configuration retains the original attachment alias for
+history compatibility, so keep that path when moving the checkout. Back up `data/`
+and the install configuration privately; neither belongs in Git. The existing
+`npm run pair` still works through the access-directory alias.
+
+The manual `pocket:start` workflow remains available for uninstalled checkouts.
+Stop/revoke only when no phone send is in progress. The CLI/daemon are independent
+of Pocket. Never use `tailscale serve reset` to remove this app. Removing the user
+service does not remove the dedicated Serve route or private data.
 
 ## Verify
 
@@ -218,7 +276,7 @@ and replace the base64 value in the `apple-touch-icon` link in
 - Submission deduplication is in memory and expires after one hour or restart.
   Review the CLI before resending an uncertain instruction.
 - Unsent drafts are memory-only. Offline sends, push notifications, durable
-  submission history, and unattended startup are not implemented.
+  submission history are not implemented.
 - Native iPhone selection handles may be absent when selecting message text.
   Use the **Copy message** button below a bubble to copy the whole message;
   the cause has not been isolated.

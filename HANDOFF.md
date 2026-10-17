@@ -58,4 +58,6 @@ verification. Desktop emulation does not establish native compositor behavior.
 The experimental daemon protocol, approval routing coverage, in-memory outcome
 ledger, and lack of offline/background features remain explicit limitations.
 See README.md for operation and revocation. A source checkout does not imply an
-existing deployment or authorize starting/stopping services.
+existing deployment or authorize starting/stopping services. The optional user-service
+installer snapshots and verifies candidates outside the source checkout; see README
+for explicit installation, updates, rollback, private state, and lifecycle commands.

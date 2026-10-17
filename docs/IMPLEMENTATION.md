@@ -85,7 +85,7 @@ another change.
 One device submits at a time; status prechecks do not provide atomic exclusion
 against CLI submissions. The in-memory outcome ledger expires after an hour or
 restart. Blocking approval routing has not been verified for every request type.
-Offline sends, push notifications, durable outcome history, and unattended startup
+Offline sends, push notifications, and durable outcome history
 are not implemented. See README.md and SPEC.md for operating constraints.
 
 
@@ -107,3 +107,35 @@ Browser checks cover repeated touch rotation, composer taps and draft retention,
 actual outer-scroll recovery with preserved transcript position, keyboard-pan
 exclusion, and refused resets. The user confirmed the correction on the iPhone
 Home Screen app. The temporary metadata recorder used for diagnosis was removed.
+
+
+## Installed user service
+
+The optional installer snapshots the configured checkout into a separate release,
+installs dependencies, and runs static checks, mock transport/API tests, and browser
+checks before switching the installed build. Updates atomically select the next
+release, restart only Pocket's systemd user service, and check loopback health.
+A failed start restores the prior release; explicit rollback switches releases
+without reverting private state. The daemon and Tailscale are unmanaged by Pocket.
+
+Verified installation, explicit update, rollback in both directions, simulated
+backend crash recovery, and serving installed assets through the existing private
+URL. Existing pairing state survived the crash unchanged. Access/attachment data
+is outside releases, with original path aliases preserved for existing image
+references. Private data directories remain 0700 and configuration 0600. The
+service is enabled; boot-before-login depends on the account's existing linger
+setting. Candidate verification passed 28 mock/API tests and 33 browser checks.
+No live model tests or changes to daemon/Tailscale settings were made.
+
+
+## Browser installation metadata
+
+Added a public web manifest with a stable root ID/scope/start URL, standalone
+display, and 192/512 PNGs rendered from the existing SVG command-mark logo.
+Static routes use an explicit filename/MIME allowlist; install assets are public,
+while conversation APIs still require pairing. Existing embedded Apple icon,
+viewport/keyboard layout, and no-store behavior are retained. No service worker
+or offline cache was added. Chromium CDP reads the manifest without parse or
+installability errors before pairing, retrieves both icons as PNG, and confirms
+unpaired conversation access remains denied. Browser UI promotion timing is
+controlled by Chrome and actual user installation remains to be confirmed.

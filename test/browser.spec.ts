@@ -126,3 +126,22 @@ test('blank loaded sessions are omitted and a real unnamed conversation uses its
   await real.click();
   await expect(page.locator('#title')).toHaveText('Real unnamed conversation');
 });
+
+test('Chrome reads the public install manifest before pairing', async ({ page }) => {
+  await page.goto('/');
+  const session = await page.context().newCDPSession(page);
+  await expect.poll(async () => {
+    const manifest = await session.send('Page.getAppManifest');
+    return manifest.data ? JSON.parse(manifest.data).name : null;
+  }).toBe('Codex Pocket');
+  const manifest = await session.send('Page.getAppManifest');
+  expect(manifest.errors).toEqual([]);
+  const { installabilityErrors } = await session.send('Page.getInstallabilityErrors');
+  expect(installabilityErrors).toEqual([]);
+  for (const size of [192, 512]) {
+    const response = await page.request.get(`/icon-${size}.png`);
+    expect(response.ok()).toBe(true);
+    expect(response.headers()['content-type']).toBe('image/png');
+  }
+  expect((await page.request.get('/api/threads')).status()).toBe(401);
+});

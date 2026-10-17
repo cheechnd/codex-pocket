@@ -7,6 +7,15 @@ import { AccessControl } from './access.js';
 import { PocketError } from '../daemon/types.js';
 
 export function createApp(adapter: DaemonAdapter, port = 4317, options: { access: AccessControl; attachments?: AttachmentStore; origin?: string; webRoot?: URL }) {
+  const publicFiles: Record<string, [string, string]> = {
+    '/': ['index.html', 'text/html; charset=utf-8'],
+    '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+    '/style.css': ['style.css', 'text/css; charset=utf-8'],
+    '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'],
+    '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
+    '/icon-192.png': ['icon-192.png', 'image/png'],
+    '/icon-512.png': ['icon-512.png', 'image/png'],
+  };
   const streams = new Set<ServerResponse>();
   const origin = options.origin ?? `http://127.0.0.1:${port}`;
   const address = new URL(origin);
@@ -30,7 +39,7 @@ export function createApp(adapter: DaemonAdapter, port = 4317, options: { access
       const url = new URL(req.url ?? '/', origin);
       // Public shell/assets contain no session or conversation data. Normal links and
       // restored browser tabs may arrive cross-site; API reads/writes remain protected.
-      const publicAsset = req.method === 'GET' && ['/', '/app.js', '/style.css', '/apple-touch-icon.png'].includes(url.pathname);
+      const publicAsset = req.method === 'GET' && Object.hasOwn(publicFiles, url.pathname);
       if (!publicAsset && ((req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site')) return json(403, { error: 'origin', message: 'Open Pocket at its configured address' });
       if (req.method === 'POST' && (req.headers.origin !== origin || req.headers['content-type'] !== 'application/json' || req.headers['x-pocket-request'] !== '1')) return json(403, { error: 'csrf', message: 'Same-origin JSON request required' });
       if (req.method === 'POST' && url.pathname === '/api/pair') {
@@ -101,10 +110,10 @@ export function createApp(adapter: DaemonAdapter, port = 4317, options: { access
           return json(200, await adapter.send(id, input.text, input.clientSubmissionId, images, input.question, input.expectedTurnId));
         }
       }
-      if (req.method === 'GET' && ['/', '/app.js', '/style.css', '/apple-touch-icon.png'].includes(url.pathname)) {
-        const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+      if (req.method === 'GET' && Object.hasOwn(publicFiles, url.pathname)) {
+        const [file, contentType] = publicFiles[url.pathname];
         const data = await readFile(fileURLToPath(new URL(file, options.webRoot ?? new URL('../web/', import.meta.url))));
-        res.writeHead(200, { 'Content-Type': file.endsWith('.png') ? 'image/png' : file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8' }); res.end(data); return;
+        res.writeHead(200, { 'Content-Type': contentType }); res.end(data); return;
       }
       json(404, { error: 'not-found', message: 'Endpoint unavailable' });
     } catch (error) {

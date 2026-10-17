@@ -57,7 +57,17 @@ disconnect does not stop work or prevent the desktop's next message.
 - General file uploads, editing files, diff editors, terminal emulation, audio.
 - Multi-user auth, multiple hosts, public hosting, cloud task environments.
 - OpenClaw integration, sidebar/session adoption, plugins, app-store packaging.
-- Push notifications, unattended services, offline sends, and background sync.
+- Push notifications, offline sends, and background sync.
+
+### Persistent installation (user-requested follow-on)
+
+Support one installed systemd user service with crash recovery and explicit
+verified updates from the source checkout. Candidate builds/tests must not change
+the running build. Keep private pairing/attachments outside releases, preserve
+existing absolute image references, retain the prior build for rollback, and
+restore it if a new build fails its startup health check. Never manage the Codex
+daemon or Tailscale settings as part of installation. No second environment,
+hosted CI, automatic Git operations, or live model tests are required.
 
 ### Async question replies (user-requested follow-on)
 

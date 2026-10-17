@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { existsSync, readFileSync, writeFileSync, openSync, mkdirSync, unlinkSync, realpathSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, isAbsolute } from 'node:path';
@@ -6,6 +7,12 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const main = resolve(root, 'dist/src/server/main.js');
 const runtime = resolve(root, '.local/pocket-runtime.json');
 const action = process.argv[2] ?? 'status';
+// Installed Pocket is owned by systemd; never launch a competing detached server.
+if (existsSync(resolve(homedir(), '.config/codex-pocket/install.json'))) {
+  if (!['start', 'stop', 'status'].includes(action)) throw new Error('Usage: start|stop|status');
+  const result = spawnSync('systemctl', ['--user', action, 'codex-pocket.service', ...(action === 'status' ? ['--no-pager'] : [])], { stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
 mkdirSync(resolve(root, '.local'), { recursive: true });
 const saved = existsSync(runtime) ? JSON.parse(readFileSync(runtime, 'utf8')) : undefined;
 function owned(pid) {

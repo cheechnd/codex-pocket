@@ -12,8 +12,8 @@
     "poc:watch": "node poc/client.mjs watch",
     "poc:send": "node poc/client.mjs send",
     "poc:verify": "node poc/verify.mjs",
-    "check": "tsc --noEmit && node --check src/web/app.js && node --check src/web/markdown.js && node --check poc/client.mjs && node --check poc/verify.mjs && node --check scripts/pocket.mjs",
-    "build": "tsc && mkdir -p dist/src/web && cp src/web/index.html src/web/style.css src/web/apple-touch-icon.png dist/src/web/ && esbuild src/web/app.js --bundle --format=esm --target=es2022 --minify --outfile=dist/src/web/app.js",
+    "check": "tsc --noEmit && node --check src/web/app.js && node --check src/web/markdown.js && node --check poc/client.mjs && node --check poc/verify.mjs && node --check scripts/pocket.mjs && node --check scripts/deploy.mjs",
+    "build": "tsc && mkdir -p dist/src/web && cp src/web/index.html src/web/style.css src/web/apple-touch-icon.png src/web/manifest.webmanifest src/web/icon-192.png src/web/icon-512.png dist/src/web/ && esbuild src/web/app.js --bundle --format=esm --target=es2022 --minify --outfile=dist/src/web/app.js",
     "start": "node dist/src/server/main.js",
     "dev": "tsx src/server/main.ts",
     "test": "tsx --test test/*.test.ts",
@@ -22,7 +22,10 @@
     "pair": "tsx src/server/pair.ts",
     "pocket:start": "node scripts/pocket.mjs start",
     "pocket:stop": "node scripts/pocket.mjs stop",
-    "pocket:status": "node scripts/pocket.mjs status"
+    "pocket:status": "node scripts/pocket.mjs status",
+    "pocket:install": "node scripts/deploy.mjs install",
+    "pocket:update": "node scripts/deploy.mjs update",
+    "pocket:rollback": "node scripts/deploy.mjs rollback"
   },
   "dependencies": {
     "iron-session": "^9.0.1",
