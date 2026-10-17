@@ -519,3 +519,30 @@ test('document-scroll recovery does not loop if the browser refuses the reset', 
   await page.evaluate(() => new Promise(resolve => { let frames = 20; const tick = () => { if (--frames) requestAnimationFrame(tick); else resolve(null); }; requestAnimationFrame(tick); }));
   expect(await page.evaluate(() => (window as any).__scrollResets)).toBe(1);
 });
+
+test('consecutive activity stays grouped and expanded details survive live refresh', async ({ page }) => {
+  const data = [
+    entry(1, { type: 'userMessage', text: 'Please inspect this scratch project' }),
+    entry(2, { type: 'reasoning', text: 'Synthetic reasoning detail' }),
+    { turnId: 'ui-turn-2', item: { id: 'tool-a', type: 'commandExecution', status: 'completed', command: 'synthetic command detail' } },
+    entry(3, { type: 'agentMessage', text: 'Inspection complete' }),
+    entry(4, { type: 'commandExecution', status: 'inProgress', command: 'separate activity detail' }),
+  ];
+  let loads = 0;
+  await routeHistory(page, () => { loads++; return history(scratchThread, data); });
+  await pair(page); await page.getByRole('button', { name: /Scratch conversation/ }).click();
+  const groups = page.locator('#transcript article.activity');
+  await expect(groups).toHaveCount(2);
+  const first = groups.first();
+  await expect(first.locator(':scope > details > summary')).toHaveText('Activity · 2');
+  await first.locator(':scope > details > summary').click();
+  await first.getByText('Terminal · Done', { exact: true }).click();
+  await expect(first.locator('pre').last()).toBeVisible();
+  const previousLoads = loads;
+  await page.request.get('http://127.0.0.1:44319/change');
+  await expect.poll(() => loads).toBeGreaterThan(previousLoads);
+  await expect(first.locator(':scope > details')).toHaveAttribute('open', '');
+  await expect(first.locator('pre').last()).toBeVisible();
+  await expect(page.locator('.userMessage .copy-button')).toHaveCount(0);
+  await expect(page.locator('.agentMessage .copy-button')).toHaveCount(1);
+});

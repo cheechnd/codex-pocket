@@ -237,26 +237,42 @@ function render(preservePosition = false) {
   $('history-bound').hidden = items.size < 1000;
   const follow = !preservePosition && (initialTranscript || followLatest);
   const top = scroller.scrollTop, height = scroller.scrollHeight;
-  const expanded = new Set([...$('transcript').querySelectorAll('article:has(details[open])')].map(row => row.dataset.key));
+  const expanded = new Set([...$('transcript').querySelectorAll('details[open][data-key]')].map(details => details.dataset.key));
   const codeScroll = new Map([...$('transcript').querySelectorAll('.code-block')].map(pre => [pre.dataset.key, pre.scrollLeft]));
   $('transcript').replaceChildren();
   const toolNames = { commandExecution: 'Terminal', fileChange: 'Files', reasoning: 'Thinking', mcpToolCall: 'Tool', webSearch: 'Search', plan: 'Plan' };
-  for (const [key, { item }] of items) {
+  let activityGroup;
+  for (const [key, { item, turnId }] of items) {
     const chat = ['userMessage', 'agentMessage'].includes(item.type);
     const row = document.createElement('article'); row.className = `message ${item.type}${chat ? '' : ' activity'}`; row.dataset.key = key;
     row.setAttribute('aria-label', item.type === 'userMessage' ? 'You' : item.type === 'agentMessage' ? 'Codex' : 'Activity');
     const text = item.text || (item.delivery === 'async' && Array.isArray(item.questions) ? item.questions.filter(q => q && typeof q.title === 'string').map(q => [q.title, ...(Array.isArray(q.options) ? q.options.filter(option => typeof option === 'string') : []).map(option => `• ${option}`)].join('\n')).join('\n\n') : (item.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n'));
     if (chat) {
+      activityGroup = undefined;
       const bubble = document.createElement('div'); bubble.className = 'bubble'; renderMarkdown(text, bubble); renderImages(imageParts(item), bubble); row.append(bubble);
-      const copy = document.createElement('button'); copy.className = 'copy-button'; copy.setAttribute('aria-label', 'Copy message'); copy.title = 'Copy'; copy.append(icon('copy'));
-      copy.onclick = async () => { try { await navigator.clipboard.writeText(text); copy.replaceChildren(icon('check')); copy.setAttribute('aria-label', 'Copied'); $('announcement').textContent = 'Message copied'; setTimeout(() => { copy.replaceChildren(icon('copy')); copy.setAttribute('aria-label', 'Copy message'); }, 1500); } catch (err) { error(err); } };
-      row.append(copy);
+      if (item.type === 'agentMessage') {
+        const copy = document.createElement('button'); copy.className = 'copy-button'; copy.setAttribute('aria-label', 'Copy message'); copy.title = 'Copy'; copy.append(icon('copy'));
+        copy.onclick = async () => { try { await navigator.clipboard.writeText(text); copy.replaceChildren(icon('check')); copy.setAttribute('aria-label', 'Copied'); $('announcement').textContent = 'Message copied'; setTimeout(() => { copy.replaceChildren(icon('copy')); copy.setAttribute('aria-label', 'Copy message'); }, 1500); } catch (err) { error(err); } };
+        row.append(copy);
+      }
     } else {
-      const details = document.createElement('details'); details.open = expanded.has(key);
+      if (!activityGroup || activityGroup.turnId !== turnId) {
+        const groupKey = `activity/${key}`;
+        const group = document.createElement('details'); group.dataset.key = groupKey; group.open = expanded.has(groupKey);
+        const heading = document.createElement('summary');
+        const content = document.createElement('div'); content.className = 'activity-items';
+        group.append(heading, content); row.append(group); $('transcript').append(row);
+        activityGroup = { turnId, heading, content, count: 0, working: false };
+      }
+      activityGroup.count++;
+      activityGroup.working ||= item.status === 'inProgress';
+      activityGroup.heading.textContent = `Activity · ${activityGroup.count}${activityGroup.working ? ' · Working' : ''}`;
+      const details = document.createElement('details'); details.dataset.key = key; details.open = expanded.has(key);
       const summary = document.createElement('summary');
       const state = ({ inProgress: 'Working', completed: 'Done', failed: 'Failed', declined: 'Declined' })[item.status] ?? item.status;
       summary.textContent = `${toolNames[item.type] ?? 'Activity'}${state ? ` · ${state}` : ''}`;
-      const pre = document.createElement('pre'); pre.textContent = text || item.command || ''; details.append(summary); if (pre.textContent) details.append(pre); row.append(details);
+      const pre = document.createElement('pre'); pre.textContent = text || item.command || ''; details.append(summary); if (pre.textContent) details.append(pre); activityGroup.content.append(details);
+      continue;
     }
     $('transcript').append(row);
     row.querySelectorAll('.code-block').forEach((pre, i) => { pre.dataset.key = `${key}/${i}`; pre.scrollLeft = codeScroll.get(pre.dataset.key) ?? 0; });
