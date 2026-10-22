@@ -25,8 +25,8 @@ experimental protocol compatibility is not a promise for every daemon version.
 - Private phone access through an independently configured Tailscale Serve route.
 - Validated and metadata-stripped private image storage, bounded capacity, and
   authenticated retrieval of app-owned attachments only.
-- Mobile/desktop layouts, safe Markdown rendering, message copy, memory-only
-  per-thread drafts, browser Back/Forward, and foreground/reload reconciliation.
+- Mobile/desktop layouts, safe Markdown rendering, message copy, tab-scoped sessionStorage text
+  drafts and memory-only image drafts, browser Back/Forward, and foreground/reload reconciliation.
 - Per-browser unread completion markers retain only bounded thread/turn IDs.
 
 ## Automated verification
@@ -139,3 +139,21 @@ or offline cache was added. Chromium CDP reads the manifest without parse or
 installability errors before pairing, retrieves both icons as PNG, and confirms
 unpaired conversation access remains denied. Browser UI promotion timing is
 controlled by Chrome and actual user installation remains to be confirmed.
+
+
+## Refresh-safe text drafts
+
+Text drafts are saved per conversation in sessionStorage on input and image/text
+paste, with an in-memory fallback for unavailable, malformed, or full storage.
+Only text and uncertain submission identifiers/captured text are stored; image
+bytes and transcripts are excluded. Unpairing/authentication loss removes the
+saved draft record. Confirmed acceptance clears matching submitted text, including
+confirmation restored from the server after refresh, while newer edits survive.
+Persisted uncertain attempts restore as locked outcome-unknown submissions and
+reconcile by their original IDs. A missing server ledger leaves the send locked;
+no request is retried or submitted automatically. Images still disappear on refresh.
+
+Verification: 39 browser checks and 28 mock/API checks pass. Draft coverage includes
+per-conversation refresh/confirmed clearing, confirmation after refresh with and
+without newer edits, unknown-outcome reload with a missing backend ledger, unpair
+cleanup, memory fallback, and text-only restoration for an image submission.

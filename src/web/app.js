@@ -5,6 +5,33 @@ let pickerScope = 'loaded', pickerCursor = null, pickerLoading = false, pickerGe
 const opening = new Set();
 let openIntent = 0;
 const drafts = new Map(), attachments = new Map(), items = new Map(), submissions = new Map();
+// Text only, scoped to this browser tab. Pending IDs guard restored text against
+// duplicate sends even when the server no longer retains its outcome ledger.
+const draftStorageKey = 'pocket-drafts-v1';
+try {
+  const stored = JSON.parse(sessionStorage.getItem(draftStorageKey) ?? 'null');
+  const validId = id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id);
+  if (stored?.version === 1) {
+    for (const entry of Array.isArray(stored.drafts) ? stored.drafts : []) {
+      if (Array.isArray(entry) && validId(entry[0]) && typeof entry[1] === 'string') drafts.set(entry[0], entry[1]);
+    }
+    for (const record of Array.isArray(stored.pending) ? stored.pending : []) {
+      if (record && validId(record.threadId) && validId(record.id) && typeof record.text === 'string') {
+        submissions.set(record.threadId, { id: record.id, threadId: record.threadId, text: record.text, state: 'outcome-unknown', message: 'Outcome unknown. Check send status; do not resend.' });
+      }
+    }
+  }
+} catch { /* Unavailable or malformed storage falls back to in-memory drafts. */ }
+function persistDrafts() {
+  const pending = [...submissions.values()].filter(record => !record.turnId && ['sending', 'accepted', 'outcome-unknown'].includes(record.state) && typeof record.text === 'string')
+    .map(({ id, threadId, text }) => ({ id, threadId, text }));
+  try {
+    const textDrafts = [...drafts].filter(([, text]) => text.length);
+    if (textDrafts.length || pending.length) sessionStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, drafts: textDrafts, pending }));
+    else sessionStorage.removeItem(draftStorageKey);
+  } catch { /* Storage denial/quota must not prevent editing or sending. */ }
+}
+function setDraft(threadId, text) { drafts.set(threadId, text); persistDrafts(); }
 let connected = false, ready = false, authenticated = false;
 let canAttachImages = false, canBrowseHistory = false, preparationCount = 0, preparationEpoch = 0;
 const MAX_IMAGES = 4, MAX_SOURCE_BYTES = 20 * 1024 * 1024, MAX_DECODED_BYTES = 8 * 1024 * 1024, MAX_TOTAL_DECODED_BYTES = 20 * 1024 * 1024, MAX_EDGE = 4096;
@@ -412,7 +439,7 @@ function applySubmission(threadId, result) {
       previous.images = []; // Release accepted image bytes; history uses authenticated thumbnails.
     }
   }
-  updateComposer();
+  persistDrafts(); updateComposer();
 }
 async function checkSubmission(threadId) {
   const pending = submissions.get(threadId);
@@ -430,7 +457,7 @@ $('send').onclick = async () => {
   const expectedTurnId = selected.status.type === 'active' ? selected.latestTurn?.id : undefined;
   const threadId = selected.id, text = $('draft').value, images = [...(attachments.get(threadId) ?? [])];
   const pending = { id: crypto.randomUUID(), threadId, text, images, state: 'sending', message: 'Sending…' };
-  drafts.set(threadId, text); submissions.set(threadId, pending); updateComposer();
+  drafts.set(threadId, text); submissions.set(threadId, pending); persistDrafts(); updateComposer();
   try {
     const res = await fetch(`/api/threads/${threadId}/messages`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pocket-Request': '1' },
@@ -444,12 +471,12 @@ $('send').onclick = async () => {
     else throw new Error('Invalid submission response');
   } catch {
     pending.state = 'outcome-unknown'; pending.message = 'Outcome unknown. Check send status; do not resend.';
-  } finally { updateComposer(); if (selected?.id === threadId) schedule(); }
+  } finally { persistDrafts(); updateComposer(); if (selected?.id === threadId) schedule(); }
 };
 $('check-submission').onclick = () => { if (selected) void checkSubmission(selected.id); };
 setInterval(() => { if (document.hidden || !authenticated) return; for (const threadId of submissions.keys()) void checkSubmission(threadId); }, 3000);
 function resizeDraft() { $('draft').style.height = 'auto'; $('draft').style.height = `${Math.min($('draft').scrollHeight || 32, 132)}px`; }
-$('draft').oninput = () => { if (selected) drafts.set(selected.id, $('draft').value); updateComposer(); };
+$('draft').oninput = () => { if (selected) setDraft(selected.id, $('draft').value); updateComposer(); };
 $('attach').onclick = () => { if (!$('attach').disabled) $('image-input').click(); };
 $('image-input').onchange = event => { void addImageFiles(event.target.files); event.target.value = ''; };
 $('draft').addEventListener('paste', event => {
@@ -457,7 +484,7 @@ $('draft').addEventListener('paste', event => {
   if (!files.length || !canAttachImages || $('attach').disabled) return;
   event.preventDefault();
   const text = event.clipboardData.getData('text/plain');
-  if (text) { $('draft').setRangeText(text, $('draft').selectionStart, $('draft').selectionEnd, 'end'); drafts.set(selected.id, $('draft').value); }
+  if (text) { $('draft').setRangeText(text, $('draft').selectionStart, $('draft').selectionEnd, 'end'); setDraft(selected.id, $('draft').value); }
   void addImageFiles(files);
 });
 function returnToList() {
@@ -512,6 +539,7 @@ function showPairing() {
   navigationThreads.clear(); backPending = false; history.replaceState(listNavigation(), '');
   authenticated = false; connected = false; ready = false; ++epoch; source?.close(); selected = undefined;
   clearTimeout(timer); timer = undefined; threads = []; items.clear(); drafts.clear(); submissions.clear();
+  try { sessionStorage.removeItem(draftStorageKey); } catch {}
   clearTimeout(pickerTimer); ++pickerGeneration; ++openIntent; pickerLoading = false; $('filter').value = '';
   attachments.clear(); canAttachImages = false; canBrowseHistory = false; pickerScope = 'loaded'; pickerCursor = null; pickerQuery = ''; opening.clear(); preparationEpoch++;
   $('draft').value = ''; $('threads').replaceChildren(); $('transcript').replaceChildren(); $('scope-all').hidden = true; $('scope-loaded').setAttribute('aria-pressed', 'true'); $('scope-all').setAttribute('aria-pressed', 'false');
@@ -528,7 +556,10 @@ async function bootstrap() {
     $('access-note').textContent = 'Paired device';
     for (const record of await api('/api/submissions')) {
       const previous = submissions.get(record.threadId);
-      if (!previous || previous.id === record.id) submissions.set(record.threadId, { ...previous, ...record });
+      if (!previous || previous.id === record.id) {
+        submissions.set(record.threadId, { ...previous, ...record });
+        applySubmission(record.threadId, record);
+      }
       void checkSubmission(record.threadId);
     }
     await status();

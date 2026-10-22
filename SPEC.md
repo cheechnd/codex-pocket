@@ -100,7 +100,7 @@ approval is introduced. The existing single-device assumption remains.
 ### Screenshot attachments (user-requested follow-on)
 
 Support pasting images and choosing screenshots/photos in the composer, including
-image-only messages. Keep previews/removal and drafts in browser memory per thread;
+image-only messages. Keep image previews/removal in browser memory per thread;
 never upload or send until explicit Send. Preserve exact accompanying text and
 existing unknown-outcome reconciliation. Limit four images, 8 MiB each and 20 MiB
 total after preparation; normalize to PNG/JPEG, at most 4096 pixels per edge.
@@ -144,9 +144,13 @@ computer; never start or repair it implicitly.
   show a new-content affordance without moving the reader's scroll position.
 - Sticky multiline composer respects phone keyboard and safe-area insets.
   Explicit Send button; Enter inserts a newline. Disable accidental double taps.
-- Keep unsent drafts per thread in memory. Default not to persist sensitive
-  drafts/transcripts in browser storage. Switching threads must not send a draft
-  to a different target. Refresh persistence is not an MVP promise.
+- Keep text drafts per conversation in tab-scoped sessionStorage, restoring them
+  after refresh and clearing them on confirmed send or unpair. Keep image drafts
+  in memory only. Confirmation clears only the submitted text, preserving newer
+  edits. Retain uncertain submission IDs with captured text across refreshes for
+  reconciliation; never auto-resend, including when the server ledger is missing.
+  Switching threads must not send a draft to a different target. Do not persist
+  transcripts or image bytes in browser storage.
 - Statuses distinguish connecting, connected, reconnecting, offline, idle,
   working, blocked, sending, accepted, failed, and outcome-unknown.
 - On unsupported approval/question: show "Needs action in Codex CLI" with any

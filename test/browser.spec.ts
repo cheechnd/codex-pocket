@@ -70,7 +70,14 @@ test('unknown send survives reload, foreground return and offline reconnect with
   await page.getByRole('button', { name: /Scratch conversation/ }).click();
   await expect(page.locator('#submission-status')).toContainText('Outcome unknown');
   await expect(page.locator('#check-submission')).toBeVisible();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('uncertain message');
   await page.getByLabel('Message', { exact: true }).fill('must stay unsent');
+  // Even losing the backend ledger must not unlock the locally retained attempt.
+  await page.route('**/api/submissions', route => route.fulfill({ json: [] }));
+  await page.route('**/api/submissions/*', route => route.fulfill({ status: 404, json: { error: 'not-found' } }));
+  await page.reload();
+  await page.getByRole('button', { name: /Scratch conversation/ }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('must stay unsent');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await expect(page.locator('#activity')).toHaveText('idle');
@@ -85,6 +92,7 @@ test('unknown send survives reload, foreground return and offline reconnect with
   await expect(page.getByRole('button', { name: 'Pair this device', exact: true })).toBeVisible();
   await expect(page.locator('#transcript')).toBeEmpty();
   expect((await page.request.get('/api/threads')).status()).toBe(401);
+  expect(await page.evaluate(() => sessionStorage.getItem('pocket-drafts-v1'))).toBeNull();
   await request.get('http://127.0.0.1:44319/normal');
 });
 

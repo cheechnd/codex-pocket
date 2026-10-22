@@ -546,3 +546,79 @@ test('consecutive activity stays grouped and expanded details survive live refre
   await expect(page.locator('.userMessage .copy-button')).toHaveCount(0);
   await expect(page.locator('.agentMessage .copy-button')).toHaveCount(1);
 });
+
+test('text drafts survive refresh per conversation and clear only after a confirmed send', async ({ page }) => {
+  await routeHistory(page, id => history(id === 'thread-2' ? otherScratchThread : scratchThread, longTranscript(4)));
+  await page.route('**/api/submissions', route => route.fulfill({ json: [] }));
+  let sends = 0;
+  await page.route('**/api/threads/*/messages', route => {
+    sends++;
+    const body = route.request().postDataJSON();
+    return route.fulfill({ json: { id: body.clientSubmissionId, threadId: 'thread-2', turnId: 'confirmed-turn', state: 'completed' } });
+  });
+  await pair(page);
+  await page.getByRole('button', { name: /Scratch conversation/ }).click();
+  const exact = '  Unsent draft\nwith whitespace 📝  ';
+  await page.getByLabel('Message', { exact: true }).fill(exact);
+  await page.getByRole('button', { name: '← Conversations' }).click();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
+  await page.getByLabel('Message', { exact: true }).fill('Other draft');
+  await page.reload();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Other draft');
+  expect(sends).toBe(0);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('');
+  await page.reload();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('');
+  await page.getByRole('button', { name: '← Conversations' }).click();
+  await page.getByRole('button', { name: /Scratch conversation/ }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue(exact);
+  expect(sends).toBe(1);
+});
+
+for (const edited of [false, true]) {
+  test(`confirmation restored after refresh ${edited ? 'preserves newer edits' : 'clears the captured draft'} without resending`, async ({ page }) => {
+    await routeHistory(page, () => history(otherScratchThread, longTranscript(4)));
+    let pending: any, sends = 0;
+    await page.route('**/api/submissions', route => route.fulfill({ json: pending ? [pending] : [] }));
+    await page.route('**/api/submissions/*', route => route.fulfill({ json: pending }));
+    await page.route('**/api/threads/thread-2/messages', route => {
+      sends++;
+      pending = { id: route.request().postDataJSON().clientSubmissionId, threadId: 'thread-2', state: 'outcome-unknown', message: 'Outcome unknown' };
+      return route.fulfill({ json: pending });
+    });
+    await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+    await page.getByLabel('Message', { exact: true }).fill('Captured text');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.locator('#submission-status')).toContainText('Outcome unknown');
+    if (edited) await page.getByLabel('Message', { exact: true }).fill('Newer unsent edits');
+    pending = { ...pending, state: 'completed', turnId: 'confirmed-turn' };
+    await page.reload(); await page.getByRole('button', { name: /Other conversation/ }).click();
+    await expect(page.getByLabel('Message', { exact: true })).toHaveValue(edited ? 'Newer unsent edits' : '');
+    const storage = await page.evaluate(() => sessionStorage.getItem('pocket-drafts-v1'));
+    expect(storage ?? '').not.toContain('Captured text');
+    expect(sends).toBe(1);
+  });
+}
+
+for (const storage of ['malformed', 'unavailable']) {
+  test(`${storage} draft storage keeps the composer usable`, async ({ page }) => {
+    await page.addInitScript(mode => {
+      if (mode === 'malformed') sessionStorage.setItem('pocket-drafts-v1', '{');
+      else Object.defineProperty(window, 'sessionStorage', { get: () => { throw new DOMException('Storage blocked', 'SecurityError'); } });
+    }, storage);
+    const errors: string[] = [];
+    page.on('pageerror', err => errors.push(err.message));
+    await routeHistory(page, () => history(otherScratchThread, longTranscript(4)));
+    await page.route('**/api/submissions', route => route.fulfill({ json: [] }));
+    await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+    await page.getByLabel('Message', { exact: true }).fill('Memory fallback');
+    await page.getByRole('button', { name: '← Conversations' }).click();
+    await page.getByRole('button', { name: /Other conversation/ }).click();
+    await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Memory fallback');
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+    expect(errors).toEqual([]);
+  });
+}

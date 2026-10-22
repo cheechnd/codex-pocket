@@ -53,8 +53,9 @@ slate-blue sent-message bubbles, plain-text replies, and system light/dark color
 composer stays below a separately scrolling transcript. History is rendered as
 safe Markdown (bold, lists, links, quotes, tables and code) with copy controls. Raw HTML is displayed as text and Markdown image URLs never load automatically. Unpairing is in Settings. SSE signals trigger throttled authoritative history reads,
 including during generation, so partial and completed representations are merged
-by turn/item ID without appending overlapping deltas. Drafts stay in browser
-memory per thread. Refresh discards them. Sensitive API responses use no-store.
+by turn/item ID without appending overlapping deltas. Text drafts are saved per conversation in sessionStorage and survive refreshes
+in the same browser tab. Confirmed sends clear only their captured text; newer
+edits are preserved. Unpairing clears saved drafts. Image drafts remain memory-only. Sensitive API responses use no-store.
 
 Switch to **All** to browse older saved conversations. Search matches saved titles;
 **Load more** fetches another 50 summaries, up to 1,000 in the browser. This view
@@ -106,8 +107,8 @@ Remove a preview with ×, then tap Send with or without accompanying text. Up to
 four images are supported. Images are resized to at most 4096 pixels per edge;
 prepared images are limited to 8 MiB each and 20 MiB total. A source file may be
 up to 20 MiB and must be decodable by the browser (PNG/JPEG screenshots work).
-Drafts, including unsent images, stay in memory per conversation and disappear
-on refresh. An unknown send remains locked until its outcome is reconciled.
+Text drafts survive refreshes in the same tab; unsent images stay in memory
+per conversation and disappear on refresh. An unknown send remains locked until its outcome is reconciled.
 
 The server validates/decodes images with Sharp, strips metadata and stores them
 privately in `.local/attachments/` (0700 directory, 0600 files). It sends app-owned
@@ -244,10 +245,10 @@ concurrent requests. Unknown outcomes block further app sends for that thread;
 **Check send status** reconciles using the user item's protocol `clientId` and
 turn status, never text equality. Missing evidence stays unknown. No automatic
 POST retries occur. Server restart/expiration loses deduplication, so review the
-CLI before manually resending an uncertain instruction. Browser reload discards drafts but restores retained pending submission IDs from
-the authenticated backend and checks their status without a POST retry. Server
-restart or one-hour expiration still loses the ledger; check the CLI before
-manually resending uncertain instructions.
+CLI before manually resending an uncertain instruction. Browser reload restores
+text drafts and locally recorded uncertain submission IDs, then checks the
+authenticated backend without a POST retry. If the backend has lost the ledger,
+the restored attempt stays locked as outcome-unknown; check the CLI to resolve it.
 
 The original `poc:*` scripts remain research references; their approval behavior
 is not production-safe.
@@ -275,8 +276,8 @@ and replace the base64 value in the `apple-touch-icon` link in
   been verified for every request type. Pocket never automatically answers them.
 - Submission deduplication is in memory and expires after one hour or restart.
   Review the CLI before resending an uncertain instruction.
-- Unsent drafts are memory-only. Offline sends, push notifications, durable
-  submission history are not implemented.
+- Text drafts use tab-scoped sessionStorage; unsent images remain memory-only.
+  Offline sends, push notifications, and durable server submission history are not implemented.
 - Native iPhone selection handles may be absent when selecting message text.
   Use the **Copy message** button below a bubble to copy the whole message;
   the cause has not been isolated.
