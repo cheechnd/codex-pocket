@@ -53,8 +53,8 @@ slate-blue sent-message bubbles, plain-text replies, and system light/dark color
 composer stays below a separately scrolling transcript. History is rendered as
 safe Markdown (bold, lists, links, quotes, tables and code) with copy controls. Raw HTML is displayed as text and Markdown image URLs never load automatically. Unpairing is in Settings. SSE signals trigger throttled authoritative history reads,
 including during generation, so partial and completed representations are merged
-by turn/item ID without appending overlapping deltas. Text drafts are saved per conversation in sessionStorage and survive refreshes
-in the same browser tab. Confirmed sends clear only their captured text; newer
+by turn/item ID without appending overlapping deltas. Text drafts are saved per conversation in localStorage and survive refreshes
+and closing/reopening the app in the same browser. Confirmed sends clear only their captured text; newer
 edits are preserved. Unpairing clears saved drafts. Image drafts remain memory-only. Sensitive API responses use no-store.
 
 Switch to **All** to browse older saved conversations. Search matches saved titles;
@@ -107,7 +107,7 @@ Remove a preview with ×, then tap Send with or without accompanying text. Up to
 four images are supported. Images are resized to at most 4096 pixels per edge;
 prepared images are limited to 8 MiB each and 20 MiB total. A source file may be
 up to 20 MiB and must be decodable by the browser (PNG/JPEG screenshots work).
-Text drafts survive refreshes in the same tab; unsent images stay in memory
+Text drafts survive refreshes and app restarts; unsent images stay in memory
 per conversation and disappear on refresh. An unknown send remains locked until its outcome is reconciled.
 
 The server validates/decodes images with Sharp, strips metadata and stores them
@@ -276,7 +276,7 @@ and replace the base64 value in the `apple-touch-icon` link in
   been verified for every request type. Pocket never automatically answers them.
 - Submission deduplication is in memory and expires after one hour or restart.
   Review the CLI before resending an uncertain instruction.
-- Text drafts use tab-scoped sessionStorage; unsent images remain memory-only.
+- Text drafts use persistent localStorage; unsent images remain memory-only.
   Offline sends, push notifications, and durable server submission history are not implemented.
 - Native iPhone selection handles may be absent when selecting message text.
   Use the **Copy message** button below a bubble to copy the whole message;

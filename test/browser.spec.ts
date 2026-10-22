@@ -92,7 +92,7 @@ test('unknown send survives reload, foreground return and offline reconnect with
   await expect(page.getByRole('button', { name: 'Pair this device', exact: true })).toBeVisible();
   await expect(page.locator('#transcript')).toBeEmpty();
   expect((await page.request.get('/api/threads')).status()).toBe(401);
-  expect(await page.evaluate(() => sessionStorage.getItem('pocket-drafts-v1'))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'))).toBeNull();
   await request.get('http://127.0.0.1:44319/normal');
 });
 
@@ -152,4 +152,56 @@ test('Chrome reads the public install manifest before pairing', async ({ page })
     expect(response.headers()['content-type']).toBe('image/png');
   }
   expect((await page.request.get('/api/threads')).status()).toBe(401);
+});
+
+test('closing and reopening the app preserves text and uncertain-send protection until unpair', async ({ playwright }) => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const profile = await mkdtemp(join(tmpdir(), 'pocket-draft-restart-'));
+  let context: Awaited<ReturnType<typeof playwright.chromium.launchPersistentContext>> | undefined;
+  let sends = 0;
+  const launch = async () => {
+    context = await playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH });
+    const thread = { id: 'thread-1', name: 'Restart draft test', status: { type: 'idle' }, cwd: '/scratch' };
+    await context.route('**/api/threads', route => route.fulfill({ json: [thread] }));
+    await context.route('**/api/threads/thread-1/history*', route => route.fulfill({ json: { thread, blocked: false, data: [], nextCursor: null } }));
+    await context.route('**/api/submissions', route => route.fulfill({ json: [] }));
+    await context.route('**/api/submissions/*', route => route.fulfill({ status: 404, json: { error: 'not-found' } }));
+    await context.route('**/api/threads/thread-1/messages', route => {
+      sends++;
+      return route.fulfill({ json: { id: route.request().postDataJSON().clientSubmissionId, threadId: 'thread-1', state: 'outcome-unknown', message: 'Outcome unknown' } });
+    });
+    const page = context.pages()[0];
+    await page.goto('http://127.0.0.1:44318/');
+    return page;
+  };
+  try {
+    let page = await launch();
+    const code = await (await context!.request.get('http://127.0.0.1:44319/code')).text();
+    await page.getByLabel('Pairing code').fill(code);
+    await page.getByRole('button', { name: 'Pair this device', exact: true }).click();
+    await page.getByRole('button', { name: /Restart draft test/ }).click();
+    const text = '  Test after app close\nexact text 📝  ';
+    await page.getByLabel('Message', { exact: true }).fill(text);
+    await context!.close();
+    page = await launch();
+    await page.getByRole('button', { name: /Restart draft test/ }).click();
+    await expect(page.getByLabel('Message', { exact: true })).toHaveValue(text);
+    expect(sends).toBe(0);
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.locator('#check-submission')).toBeVisible();
+    await context!.close();
+    page = await launch();
+    await page.getByRole('button', { name: /Restart draft test/ }).click();
+    await expect(page.getByLabel('Message', { exact: true })).toHaveValue(text);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+    await expect(page.locator('#check-submission')).toBeVisible();
+    expect(sends).toBe(1);
+    await page.getByRole('button', { name: '← Conversations' }).click();
+    await page.getByLabel('Settings', { exact: true }).click();
+    await page.getByRole('button', { name: 'Unpair this device', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Pair this device', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'))).toBeNull();
+  } finally { await context?.close(); await rm(profile, { recursive: true, force: true }); }
 });

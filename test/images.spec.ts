@@ -176,7 +176,7 @@ test('unknown image send preserves the draft and does not blindly resend; unsafe
   await expect(page.locator('#check-submission')).toBeVisible();
   await expect(page.getByLabel('Message', { exact: true })).toHaveValue('keep this exact with image');
   await expect(page.locator('#attachments img')).toHaveCount(0);
-  expect(await page.evaluate(() => sessionStorage.getItem('pocket-drafts-v1'))).not.toContain('data:image');
+  expect(await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'))).not.toContain('data:image');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   expect(isolated.requests.length).toBe(initialRequests);
   await expect(page.locator('#transcript img')).toHaveCount(0);

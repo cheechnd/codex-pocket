@@ -25,7 +25,7 @@ experimental protocol compatibility is not a promise for every daemon version.
 - Private phone access through an independently configured Tailscale Serve route.
 - Validated and metadata-stripped private image storage, bounded capacity, and
   authenticated retrieval of app-owned attachments only.
-- Mobile/desktop layouts, safe Markdown rendering, message copy, tab-scoped sessionStorage text
+- Mobile/desktop layouts, safe Markdown rendering, message copy, persistent localStorage text
   drafts and memory-only image drafts, browser Back/Forward, and foreground/reload reconciliation.
 - Per-browser unread completion markers retain only bounded thread/turn IDs.
 
@@ -143,7 +143,7 @@ controlled by Chrome and actual user installation remains to be confirmed.
 
 ## Refresh-safe text drafts
 
-Text drafts are saved per conversation in sessionStorage on input and image/text
+Text drafts are saved per conversation in localStorage on input and image/text
 paste, with an in-memory fallback for unavailable, malformed, or full storage.
 Only text and uncertain submission identifiers/captured text are stored; image
 bytes and transcripts are excluded. Unpairing/authentication loss removes the
@@ -157,3 +157,12 @@ Verification: 39 browser checks and 28 mock/API checks pass. Draft coverage incl
 per-conversation refresh/confirmed clearing, confirmation after refresh with and
 without newer edits, unknown-outcome reload with a missing backend ledger, unpair
 cleanup, memory fallback, and text-only restoration for an image submission.
+
+
+The initial sessionStorage implementation covered refresh but did not cover
+closing/reopening the iPhone Home Screen app. Drafts and uncertain-send markers
+now use localStorage; existing sessionStorage drafts migrate on the next load.
+An isolated Chromium persistent-profile test closes the full browser context and
+relaunches twice, verifying exact draft text, no automatic POST, an uncertain-send
+lock even with no server ledger, and cleanup on unpair. The user confirmed draft restoration after closing and reopening the iPhone
+Home Screen app. All 41 browser checks and 28 mock/API checks pass.

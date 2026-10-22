@@ -597,7 +597,7 @@ for (const edited of [false, true]) {
     pending = { ...pending, state: 'completed', turnId: 'confirmed-turn' };
     await page.reload(); await page.getByRole('button', { name: /Other conversation/ }).click();
     await expect(page.getByLabel('Message', { exact: true })).toHaveValue(edited ? 'Newer unsent edits' : '');
-    const storage = await page.evaluate(() => sessionStorage.getItem('pocket-drafts-v1'));
+    const storage = await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'));
     expect(storage ?? '').not.toContain('Captured text');
     expect(sends).toBe(1);
   });
@@ -606,8 +606,8 @@ for (const edited of [false, true]) {
 for (const storage of ['malformed', 'unavailable']) {
   test(`${storage} draft storage keeps the composer usable`, async ({ page }) => {
     await page.addInitScript(mode => {
-      if (mode === 'malformed') sessionStorage.setItem('pocket-drafts-v1', '{');
-      else Object.defineProperty(window, 'sessionStorage', { get: () => { throw new DOMException('Storage blocked', 'SecurityError'); } });
+      if (mode === 'malformed') localStorage.setItem('pocket-drafts-v1', '{');
+      else Object.defineProperty(window, 'localStorage', { get: () => { throw new DOMException('Storage blocked', 'SecurityError'); } });
     }, storage);
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
@@ -622,3 +622,14 @@ for (const storage of ['malformed', 'unavailable']) {
     expect(errors).toEqual([]);
   });
 }
+
+test('existing session drafts migrate to persistent storage without losing text', async ({ page }) => {
+  await page.goto('/');
+  await pair(page);
+  await page.evaluate(() => sessionStorage.setItem('pocket-drafts-v1', JSON.stringify({ version: 1, drafts: [['thread-2', 'Earlier session draft']], pending: [] })));
+  await page.reload();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Earlier session draft');
+  expect(await page.evaluate(() => sessionStorage.getItem('pocket-drafts-v1'))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'))).toContain('Earlier session draft');
+});

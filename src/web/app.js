@@ -5,11 +5,18 @@ let pickerScope = 'loaded', pickerCursor = null, pickerLoading = false, pickerGe
 const opening = new Set();
 let openIntent = 0;
 const drafts = new Map(), attachments = new Map(), items = new Map(), submissions = new Map();
-// Text only, scoped to this browser tab. Pending IDs guard restored text against
+// Text only, kept on this device across app sessions. Pending IDs guard against
 // duplicate sends even when the server no longer retains its outcome ledger.
 const draftStorageKey = 'pocket-drafts-v1';
 try {
-  const stored = JSON.parse(sessionStorage.getItem(draftStorageKey) ?? 'null');
+  let raw = localStorage.getItem(draftStorageKey);
+  // Carry over drafts saved by the earlier tab-scoped implementation.
+  if (raw === null) {
+    try { raw = sessionStorage.getItem(draftStorageKey); } catch {}
+    if (raw !== null) localStorage.setItem(draftStorageKey, raw);
+  }
+  try { sessionStorage.removeItem(draftStorageKey); } catch {}
+  const stored = JSON.parse(raw ?? 'null');
   const validId = id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id);
   if (stored?.version === 1) {
     for (const entry of Array.isArray(stored.drafts) ? stored.drafts : []) {
@@ -27,8 +34,8 @@ function persistDrafts() {
     .map(({ id, threadId, text }) => ({ id, threadId, text }));
   try {
     const textDrafts = [...drafts].filter(([, text]) => text.length);
-    if (textDrafts.length || pending.length) sessionStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, drafts: textDrafts, pending }));
-    else sessionStorage.removeItem(draftStorageKey);
+    if (textDrafts.length || pending.length) localStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, drafts: textDrafts, pending }));
+    else localStorage.removeItem(draftStorageKey);
   } catch { /* Storage denial/quota must not prevent editing or sending. */ }
 }
 function setDraft(threadId, text) { drafts.set(threadId, text); persistDrafts(); }
@@ -539,6 +546,7 @@ function showPairing() {
   navigationThreads.clear(); backPending = false; history.replaceState(listNavigation(), '');
   authenticated = false; connected = false; ready = false; ++epoch; source?.close(); selected = undefined;
   clearTimeout(timer); timer = undefined; threads = []; items.clear(); drafts.clear(); submissions.clear();
+  try { localStorage.removeItem(draftStorageKey); } catch {}
   try { sessionStorage.removeItem(draftStorageKey); } catch {}
   clearTimeout(pickerTimer); ++pickerGeneration; ++openIntent; pickerLoading = false; $('filter').value = '';
   attachments.clear(); canAttachImages = false; canBrowseHistory = false; pickerScope = 'loaded'; pickerCursor = null; pickerQuery = ''; opening.clear(); preparationEpoch++;

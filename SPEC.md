@@ -144,8 +144,8 @@ computer; never start or repair it implicitly.
   show a new-content affordance without moving the reader's scroll position.
 - Sticky multiline composer respects phone keyboard and safe-area insets.
   Explicit Send button; Enter inserts a newline. Disable accidental double taps.
-- Keep text drafts per conversation in tab-scoped sessionStorage, restoring them
-  after refresh and clearing them on confirmed send or unpair. Keep image drafts
+- Keep text drafts per conversation in localStorage, restoring them
+  after refresh or closing/reopening the app and clearing them on confirmed send or unpair. Keep image drafts
   in memory only. Confirmation clears only the submitted text, preserving newer
   edits. Retain uncertain submission IDs with captured text across refreshes for
   reconciliation; never auto-resend, including when the server ledger is missing.
