@@ -11,7 +11,8 @@ interface AccessState {
   sessions: { id: string; expires: number }[];
 }
 const digest = (value: string) => createHash('sha256').update(value).digest();
-const lifetime = 7 * 24 * 3600;
+const lifetime = 30 * 24 * 3600;
+const renewalInterval = 60 * 60 * 1000;
 /** iron-session owns cookie encryption/signing. This store adds single-use pairing and revocation. */
 export class AccessControl {
   private attempts = 0;
@@ -49,7 +50,7 @@ export class AccessControl {
     return code;
   }
   private async session(req: IncomingMessage, res: ServerResponse, origin: string) {
-    return getIronSession<{ id: string }>(req, res, {
+    return getIronSession<{ id: string; renewedAt?: number }>(req, res, {
       password: this.load().password,
       cookieName: origin.startsWith('https:') ? '__Host-codex-pocket' : 'codex-pocket-local',
       ttl: lifetime,
@@ -61,7 +62,19 @@ export class AccessControl {
   }
   async authenticate(req: IncomingMessage, res: ServerResponse, origin: string) {
     const session = await this.session(req, res, origin);
-    return this.isValid(session.id) ? session.id : undefined;
+    // Read after the async unseal so a concurrent logout/revoke cannot be revived.
+    const state = this.load(), now = Date.now();
+    const record = state.sessions.find(s => s.id === session.id && s.expires > now);
+    if (!record) return undefined;
+    // Refresh both the server expiry and sealed browser cookie at most hourly.
+    // Legacy seven-day cookies have no timestamp and upgrade on their next use.
+    if (!Number.isFinite(session.renewedAt) || session.renewedAt! > now || now - session.renewedAt! >= renewalInterval) {
+      record.expires = now + lifetime * 1000;
+      session.renewedAt = now;
+      this.save(state);
+      await session.save();
+    }
+    return session.id;
   }
   async pair(req: IncomingMessage, res: ServerResponse, origin: string, code: unknown) {
     if (Date.now() - this.attemptWindow > 60_000) { this.attemptWindow = Date.now(); this.attempts = 0; }
@@ -75,7 +88,8 @@ export class AccessControl {
     state.sessions = state.sessions.filter(s => s.expires > Date.now());
     if (state.sessions.length >= 32) state.sessions.shift();
     session.id = randomBytes(24).toString('hex');
-    state.sessions.push({ id: session.id, expires: Date.now() + lifetime * 1000 });
+    session.renewedAt = Date.now();
+    state.sessions.push({ id: session.id, expires: session.renewedAt + lifetime * 1000 });
     this.save(state); await session.save();
   }
   async logout(req: IncomingMessage, res: ServerResponse, origin: string) {

@@ -268,6 +268,10 @@ it as an authenticated control interface even though it is a personal app.
 - Bind loopback by default. Deployment target is private Tailscale Serve HTTPS
   to loopback with tailnet policy; do not use Funnel or expose an unauthenticated
   LAN/0.0.0.0 listener as a shortcut. Deployment is a separate authorized task.
+- Pairings expire after 30 days of inactivity. Renew valid cookies and server
+  expiry together during authenticated use, at most hourly. Upgrade existing valid
+  pairings without a new code; never renew expired or revoked sessions. Explicit
+  unpair and administrative revocation remain immediate.
 - Establish application access control before phone testing. Prefer a secure
   session/pairing mechanism; do not treat a guessable URL or tailnet membership
   alone as user identity. Trusted Tailscale identity may be used only when the

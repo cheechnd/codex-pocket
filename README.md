@@ -137,8 +137,11 @@ cat .local/access/pairing-code
 ```
 
 Connect Tailscale on the phone, open that HTTPS URL, and enter the code. It is
-valid for ten minutes and one use. The browser receives a seven-day signed,
-encrypted, HttpOnly/Secure/SameSite=Strict cookie from `iron-session`. Pairing
+valid for ten minutes and one use. The browser receives a signed, encrypted, HttpOnly/Secure/SameSite=Strict
+cookie from `iron-session`, with a 30-day inactivity lifetime. Valid authenticated
+use renews both the cookie and server-side expiry at most once an hour. Existing
+valid seven-day pairings upgrade automatically on their next use; expired pairings
+still need a new code. Pairing
 attempts are limited to ten per minute. Conversations, sends and SSE require a
 valid session. **Unpair this device** revokes it server-side and clears the view.
 `npm run pair -- --revoke` revokes all paired devices and issues a new code.

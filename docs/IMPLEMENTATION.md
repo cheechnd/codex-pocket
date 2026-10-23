@@ -166,3 +166,18 @@ An isolated Chromium persistent-profile test closes the full browser context and
 relaunches twice, verifying exact draft text, no automatic POST, an uncertain-send
 lock even with no server ledger, and cleanup on unpair. The user confirmed draft restoration after closing and reopening the iPhone
 Home Screen app. All 41 browser checks and 28 mock/API checks pass.
+
+
+## Rolling pairing lifetime
+
+Pairings now use a 30-day inactivity lifetime. Authenticated HTTP requests renew
+both the sealed cookie and persisted server expiry at most hourly; the SSE
+revocation check remains read-only. Existing valid seven-day cookies have no
+renewal timestamp and upgrade on their next authenticated request. Expired
+cookies/records and revoked IDs cannot renew. State is reloaded after asynchronous
+cookie unsealing and saved synchronously before resealing, so a concurrent revoke
+cannot be overwritten by stale session state. Pairing codes remain single-use
+and valid for ten minutes; cookie security flags and immediate logout/revocation
+are unchanged. Clock-driven isolated API tests verify inactivity expiry, renewal
+past the original expiry, legacy upgrade, and refusal to revive expired/revoked
+sessions without sending any model input.
