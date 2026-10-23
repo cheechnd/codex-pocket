@@ -181,3 +181,37 @@ and valid for ten minutes; cookie security flags and immediate logout/revocation
 are unchanged. Clock-driven isolated API tests verify inactivity expiry, renewal
 past the original expiry, legacy upgrade, and refusal to revive expired/revoked
 sessions without sending any model input.
+
+
+## Named Tailscale service
+
+The private entry point can use a named Tailscale Service with tcp:443 while
+Pocket remains on its existing loopback backend and systemd user service.
+The current setup's selected hostname, local target, snapshots and verification
+belong in ignored `.local/named-service/`, not reusable code or public docs.
+The host already had a tag-based identity; no ownership, network grants, SSH
+policy, Codex daemon, or unrelated service changes were required.
+
+The owner chose to retire Pocket's old device/port URL. Pocket's primary
+PUBLIC_ORIGIN was changed in private install configuration and an app-specific
+systemd environment override, preserving its exact Host/Origin checks, pairing
+store, existing data, and process management. New-host browser cookies and drafts
+are origin-scoped: pair once at the new hostname; old browser-local drafts do not
+transfer automatically. Existing server-side pairings are not revoked.
+
+Rollback removes only the named service's HTTPS endpoint, restores Pocket's
+prior PUBLIC_ORIGIN from its private snapshot, removes the app-specific origin
+override, and restarts Pocket. Recreate only Pocket's previous device endpoint
+if it was retired. Never restore an old whole-Serve snapshot over newer changes
+from other app sessions. Service host approval is independent of local Serve
+configuration. Remote owner confirmation is required when the host cannot reach
+its own service VIP.
+
+Verified: the owner opened the named address from a phone, paired, and loaded
+conversations. Loopback requests using the selected public Host return the shell
+and assets, reject unpaired/spoofed-identity API access with 401, and reject
+cross-origin reads/pairing writes with 403. The retired endpoint was exclusively
+Pocket's root proxy; before/after comparison confirms only that endpoint changed
+(accounting for Tailscale omitting empty route containers). Other named services
+remain configured. No model input was sent and no application source change was
+needed; only private origin configuration and Pocket's service override changed.
