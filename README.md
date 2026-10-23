@@ -132,8 +132,7 @@ CODEX_DAEMON_SOCKET="$HOME/.codex/app-server-control/app-server-control.sock" \
 npm run pocket:start
 # Add this dedicated route; do not reset existing Serve configuration.
 tailscale serve --bg --https=9443 http://127.0.0.1:4317
-npm run pair
-cat .local/access/pairing-code
+npm run pair                         # prints the one-time code
 ```
 
 Connect Tailscale on the phone, open that HTTPS URL, and enter the code. It is
@@ -150,7 +149,9 @@ Existing live streams stop on their next event or within the 15-second heartbeat
 Only application session secrets/IDs live in `.local/access/`, with 0700 directory
 and 0600 files. No Codex credentials are copied. Keep this directory private and
 out of Git. `POCKET_STATE_DIR` can select another application-owned private folder.
-Codes are deliberately written to a private file instead of process logs or URLs.
+The pairing command prints the single-use code directly to your terminal and
+also writes it to the private `pairing-code` file. The backend does not log codes
+or place them in URLs.
 Do not use Tailscale Funnel. Pairing is independent of tailnet membership.
 
 ## Install as a persistent user service
