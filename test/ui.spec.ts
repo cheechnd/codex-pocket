@@ -61,6 +61,23 @@ function history(thread: typeof scratchThread, data: unknown[], nextCursor: stri
   return { thread, blocked: false, data, nextCursor };
 }
 
+test('settings reload refreshes the app without unpairing or losing text drafts', async ({ page }) => {
+  await routeHistory(page, id => history(id === 'thread-2' ? otherScratchThread : scratchThread, []));
+  await pair(page);
+  await page.getByRole('button', { name: /Other conversation/ }).click();
+  const text = '  Keep my draft\nexactly 📝  ';
+  await page.getByLabel('Message', { exact: true }).fill(text);
+  await page.getByRole('button', { name: '← Conversations' }).click();
+  await page.getByLabel('Settings', { exact: true }).click();
+  await Promise.all([
+    page.waitForEvent('load'),
+    page.getByRole('button', { name: 'Reload app', exact: true }).click(),
+  ]);
+  await expect(page.getByRole('button', { name: /Other conversation/ })).toBeVisible();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue(text);
+});
+
 test('mobile composer stays in the viewport with a long transcript', async ({ page }) => {
   await routeHistory(page, (threadId) => history(
     threadId === 'thread-2' ? otherScratchThread : scratchThread,
@@ -265,6 +282,68 @@ test('Markdown formats replies without executing HTML or loading embedded images
   expect(await page.evaluate(() => performance.getEntriesByType('resource').some(resource => resource.name.includes('unsafe.example.invalid')))).toBe(false);
   expect(await page.evaluate(() => Boolean((window as any).__markdownXss))).toBe(false);
   await page.screenshot({ path: '.local/markdown-browser.png', fullPage: true });
+});
+
+test('code buttons copy only their block with exact whitespace and stable feedback', async ({ page }) => {
+  const code = '  printf "<hello>"  \n\tsecond line\n\n';
+  const text = `Outside text and \`inline code\`.\n\n\`\`\`sh\n${code}\`\`\`\n\n~~~\nother command\n~~~`;
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: {
+      writeText: async (text: string) => {
+        if ((window as any).__failCopy) throw new Error('denied');
+        (window as any).__copiedCode = text;
+      },
+    } });
+  });
+  await routeHistory(page, id => history(id === 'thread-2' ? otherScratchThread : scratchThread, [entry(1, { type: 'agentMessage', text })]));
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  for (const width of [1024, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const buttons = page.locator('.code-copy');
+    await expect(buttons).toHaveCount(2);
+    const before = await buttons.first().boundingBox();
+    await expect(buttons.first().locator('svg')).toBeVisible();
+    await buttons.first().click();
+    await expect(buttons.first()).toHaveAttribute('aria-label', 'Copied');
+    expect(await page.evaluate(() => (window as any).__copiedCode)).toBe(code);
+    expect(await buttons.first().boundingBox()).toEqual(before);
+    await expect(buttons.first()).toHaveAttribute('aria-label', 'Copy code');
+    await buttons.last().click();
+    expect(await page.evaluate(() => (window as any).__copiedCode)).toBe('other command\n');
+    await expect(page.getByRole('button', { name: 'Copy message', exact: true })).toHaveCount(1);
+  }
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: '.local/code-copy-dark.png' });
+  await page.evaluate(() => { (window as any).__failCopy = true; });
+  await page.locator('.code-copy').first().click();
+  await expect(page.locator('.code-copy').first()).toHaveAttribute('aria-label', 'Copy failed');
+  await expect(page.locator('.code-copy').first()).toHaveAttribute('aria-label', 'Copy code');
+});
+
+test('code surfaces show safe language labels and syntax colors with independent horizontal scrolling', async ({ page }) => {
+  const code = '"scripts": {\n  "dev": "next dev",\n  "build": "next build",\n  "start": "next start"\n}\n';
+  const text = `Next scripts:\n\n\`\`\`json\n${code}\`\`\`\n\n\`\`\`unknown\n${'long command '.repeat(30)}\n\`\`\`\n\n\`\`\`html\n<img src=x onerror="window.codeXss=true">\n\`\`\``;
+  await routeHistory(page, id => history(id === 'thread-2' ? otherScratchThread : scratchThread, [entry(1, { type: 'agentMessage', text })]));
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('.code-language')).toHaveText(['json', 'unknown', 'html']);
+  expect(await page.locator('.code-block code').first().textContent()).toBe(code);
+  await expect(page.locator('.code-block .hljs-attr').first()).toHaveText('"scripts"');
+  await expect(page.locator('.code-block .hljs-string').first()).toHaveText('"next dev"');
+  await expect(page.locator('.code-block img')).toHaveCount(0);
+  expect(await page.evaluate(() => Boolean((window as any).codeXss))).toBe(false);
+  for (const width of [1024, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const pre = page.locator('.code-block').nth(1), copy = page.locator('.code-copy').nth(1);
+    const before = await copy.boundingBox();
+    expect(await pre.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+    await pre.evaluate(el => { el.scrollLeft = 120; });
+    expect(await copy.boundingBox()).toEqual(before);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.locator('.code-container').first().screenshot({ path: `.local/code-surface-${width}-${colorScheme}.png` });
+    }
+  }
 });
 
 test('reopening follows the bottom after delayed images and layout changes, while readers can scroll up', async ({ page }) => {

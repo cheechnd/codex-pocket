@@ -583,6 +583,7 @@ $('pair-form').onsubmit = async event => {
     $('pair-code').value = ''; $('error').textContent = ''; await bootstrap();
   } catch (err) { error(err); } finally { button.disabled = false; }
 };
+$('reload').onclick = () => { persistDrafts(); window.location.reload(); };
 $('logout').onclick = async () => {
   try {
     const response = await fetch('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pocket-Request': '1' }, body: '{}' });
