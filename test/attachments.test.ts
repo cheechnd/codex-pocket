@@ -31,6 +31,7 @@ test('image API stores private decoded images, exact text + localImage RPC, auth
   const page = await (await fetch(app.origin + '/api/threads/thread-1/history', { headers: { Cookie: cookie } })).json() as any;
   const item = page.data.find((e: any) => e.item.clientId === 'image-1').item;
   assert.equal(item.content[0].text, text); const url = item.content[1].url; assert.match(url, /^\/api\/attachments\/[a-f0-9]{64}$/);
+  assert.equal(item.content[1].width, 64); assert.equal(item.content[1].height, 64);
   assert.equal(JSON.stringify(page).includes(store.directory), false);
   assert.equal((await fetch(app.origin + url)).status, 401);
   assert.equal((await fetch(app.origin + url, { headers: { Cookie: cookie, Origin: 'https://evil.example' } })).status, 403);
@@ -38,6 +39,9 @@ test('image API stores private decoded images, exact text + localImage RPC, auth
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), await readFile(sent.input[1].path));
   const reopened = new AttachmentStore(store.directory);
   assert.equal((await reopened.get(url.split('/').at(-1))).mime, 'image/png');
+  const restored = await reopened.history('thread-1', { data: [{ item: { type: 'userMessage', clientId: 'image-1', content: [{ type: 'localImage', path: sent.input[1].path }] } }] });
+  assert.equal(restored.data[0].item.content[0].width, 64);
+  assert.equal(restored.data[0].item.content[0].height, 64);
   mock.turnMode('timeout');
   const unknown = await (await post({ text: '', images, clientSubmissionId: 'image-only' })).json() as any; assert.equal(unknown.state, 'outcome-unknown');
   assert.equal(mock.calls.filter(c => c.method === 'turn/start').at(-1).params.input.length, 1);

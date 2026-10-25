@@ -2,6 +2,7 @@ import { renderMarkdown } from './markdown.js';
 const $ = id => document.getElementById(id);
 let selected, source, epoch = 0, cursor, busy = false, dirty = false, timer, threads = [];
 let pickerScope = 'loaded', pickerCursor = null, pickerLoading = false, pickerGeneration = 0, pickerTimer, pickerQuery = '';
+let historyLoading = false, historyFailed = false, historyScrollTimer, historyScrollAt = 0, historyAutoArmed = true;
 const opening = new Set();
 let openIntent = 0;
 const drafts = new Map(), attachments = new Map(), items = new Map(), submissions = new Map();
@@ -43,7 +44,7 @@ let connected = false, ready = false, authenticated = false;
 let canAttachImages = false, canBrowseHistory = false, preparationCount = 0, preparationEpoch = 0;
 const MAX_IMAGES = 4, MAX_SOURCE_BYTES = 20 * 1024 * 1024, MAX_DECODED_BYTES = 8 * 1024 * 1024, MAX_TOTAL_DECODED_BYTES = 20 * 1024 * 1024, MAX_EDGE = 4096;
 const checking = new Set();
-let initialTranscript = true, followLatest = true, bottomFrame, previousScrollTop = 0, viewportFollowLock = false;
+let initialTranscript = true, followLatest = true, bottomFrame, previousScrollTop = 0, viewportFollowLock = false, readerAnchor;
 const scroller = $('message-scroll');
 const navigationSession = crypto.randomUUID(), navigationThreads = new Map();
 let backPending = false;
@@ -246,17 +247,42 @@ function safeAttachmentUrl(url) {
   } catch { return null; }
 }
 function imageParts(item) {
-  return (item.content ?? []).filter(part => part?.type === 'image' || part?.type === 'localImage').map(part => ({ url: safeAttachmentUrl(part.url), placeholder: part.type === 'localImage' || !safeAttachmentUrl(part.url) }));
+  return (item.content ?? []).filter(part => part?.type === 'image' || part?.type === 'localImage').map(part => ({ url: safeAttachmentUrl(part.url), width: part.width, height: part.height, placeholder: part.type === 'localImage' || !safeAttachmentUrl(part.url) }));
 }
 function renderImages(parts, bubble) {
   for (const part of parts) {
     if (!part.url) { const placeholder = document.createElement('span'); placeholder.className = 'image-placeholder'; placeholder.textContent = 'Image'; bubble.append(placeholder); continue; }
     const image = document.createElement('img'); image.className = 'message-image'; image.src = part.url; image.alt = 'Attached image'; image.loading = 'lazy';
+    if ([part.width, part.height].every(size => Number.isInteger(size) && size > 0 && size <= 4096)) {
+      image.width = part.width; image.height = part.height;
+      image.style.width = `${Math.min(part.width, 320, 320 * part.width / part.height)}px`;
+      image.style.aspectRatio = `${part.width} / ${part.height}`;
+    }
     const link = document.createElement('a'); link.className = 'message-image-link'; link.href = part.url; link.target = '_blank'; link.rel = 'noopener'; link.append(image); bubble.append(link);
   }
 }
 function atBottom() { return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 2; }
-function scrollToLatest() { scroller.scrollTop = scroller.scrollHeight; previousScrollTop = scroller.scrollTop; $('new-content').hidden = true; markCurrentViewed(); }
+function scrollToLatest() { readerAnchor = undefined; scroller.scrollTop = scroller.scrollHeight; previousScrollTop = scroller.scrollTop; $('new-content').hidden = true; markCurrentViewed(); }
+function captureReaderAnchor() {
+  const bounds = scroller.getBoundingClientRect();
+  const visible = node => { const rect = node.getBoundingClientRect(); return rect.height > 0 && rect.bottom > bounds.top && rect.top < bounds.bottom; };
+  const rows = [...$('transcript').children].filter(visible);
+  const row = rows.find(node => !node.classList.contains('activity')) ?? rows[0];
+  if (!row) return;
+  const node = [...row.querySelectorAll('.bubble>p,.bubble pre,.message-image')].find(visible) ?? row;
+  return { epoch, key: row.dataset.key, node, offset: node.getBoundingClientRect().top - bounds.top, rowOffset: row.getBoundingClientRect().top - bounds.top };
+}
+function restoreReaderAnchor() {
+  const anchor = readerAnchor;
+  if (!anchor || anchor.epoch !== epoch || followLatest || !selected) return;
+  const row = [...$('transcript').children].find(node => node.dataset.key === anchor.key);
+  const node = anchor.node.isConnected ? anchor.node : row;
+  if (!node) { readerAnchor = undefined; return; }
+  const offset = node === anchor.node ? anchor.offset : anchor.rowOffset;
+  const delta = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
+  if (Math.abs(delta) > .5) scroller.scrollTop += delta;
+  previousScrollTop = scroller.scrollTop;
+}
 function settleBottom() {
   if (!selected || !followLatest || bottomFrame !== undefined) return;
   const current = epoch;
@@ -267,18 +293,28 @@ function settleBottom() {
 }
 function render(preservePosition = false) {
   if (preservePosition) viewportFollowLock = false;
+  const follow = !preservePosition && (initialTranscript || followLatest);
+  if (!follow) readerAnchor = captureReaderAnchor();
   while (items.size > 1000) items.delete(items.keys().next().value);
   $('history-bound').hidden = items.size < 1000;
-  const follow = !preservePosition && (initialTranscript || followLatest);
-  const top = scroller.scrollTop, height = scroller.scrollHeight;
   const expanded = new Set([...$('transcript').querySelectorAll('details[open][data-key]')].map(details => details.dataset.key));
   const codeScroll = new Map([...$('transcript').querySelectorAll('.code-block')].map(pre => [pre.dataset.key, pre.scrollLeft]));
-  $('transcript').replaceChildren();
+  const transcript = $('transcript');
+  const existingRows = new Map([...transcript.children].map(row => [row.dataset.key, row]));
+  const nextRows = [];
   const toolNames = { commandExecution: 'Terminal', fileChange: 'Files', reasoning: 'Thinking', mcpToolCall: 'Tool', webSearch: 'Search', plan: 'Plan' };
   let activityGroup;
   for (const [key, { item, turnId }] of items) {
     const chat = ['userMessage', 'agentMessage'].includes(item.type);
+    // Keep unchanged messages (especially decoded images) mounted while paging
+    // or streaming. Recreating them briefly collapses their measured height.
+    const signature = chat ? JSON.stringify(item) : null;
+    const existingRow = existingRows.get(key);
+    if (chat && existingRow?.itemSignature === signature) {
+      activityGroup = undefined; nextRows.push(existingRow); continue;
+    }
     const row = document.createElement('article'); row.className = `message ${item.type}${chat ? '' : ' activity'}`; row.dataset.key = key;
+    row.itemSignature = signature;
     row.setAttribute('aria-label', item.type === 'userMessage' ? 'You' : item.type === 'agentMessage' ? 'Codex' : 'Activity');
     const text = item.text || (item.delivery === 'async' && Array.isArray(item.questions) ? item.questions.filter(q => q && typeof q.title === 'string').map(q => [q.title, ...(Array.isArray(q.options) ? q.options.filter(option => typeof option === 'string') : []).map(option => `• ${option}`)].join('\n')).join('\n\n') : (item.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n'));
     if (chat) {
@@ -295,7 +331,7 @@ function render(preservePosition = false) {
         const group = document.createElement('details'); group.dataset.key = groupKey; group.open = expanded.has(groupKey);
         const heading = document.createElement('summary');
         const content = document.createElement('div'); content.className = 'activity-items';
-        group.append(heading, content); row.append(group); $('transcript').append(row);
+        group.append(heading, content); row.append(group); nextRows.push(row);
         activityGroup = { turnId, heading, content, count: 0, working: false };
       }
       activityGroup.count++;
@@ -308,43 +344,87 @@ function render(preservePosition = false) {
       const pre = document.createElement('pre'); pre.textContent = text || item.command || ''; details.append(summary); if (pre.textContent) details.append(pre); activityGroup.content.append(details);
       continue;
     }
-    $('transcript').append(row);
+    nextRows.push(row);
     row.querySelectorAll('.code-block').forEach((pre, i) => { pre.dataset.key = `${key}/${i}`; pre.scrollLeft = codeScroll.get(pre.dataset.key) ?? 0; });
   }
+  let position = transcript.firstChild;
+  for (const row of nextRows) {
+    if (row !== position) transcript.insertBefore(row, position);
+    position = row.nextSibling;
+  }
+  while (position) { const next = position.nextSibling; position.remove(); position = next; }
   initialTranscript = false;
   followLatest = follow;
   if (follow) { scrollToLatest(); settleBottom(); }
-  else { scroller.scrollTop = top; previousScrollTop = scroller.scrollTop; $('new-content').hidden = atBottom(); }
+  else { restoreReaderAnchor(); $('new-content').hidden = atBottom(); }
 }
 async function hydrate(older = false) {
   if (!selected || !authenticated || document.hidden) return;
-  if (busy) { dirty = true; return; }
+  if (older && (!cursor || items.size >= 1000)) return;
+  if (busy) { if (!older) dirty = true; return; }
   busy = true; const current = epoch; const id = selected.id;
+  const requestedCursor = cursor;
+  if (older) { historyAutoArmed = false; historyLoading = true; updateHistoryControl(); }
   try {
-    const page = await api(`/api/threads/${id}/history${older && cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+    const page = await api(`/api/threads/${id}/history${older ? `?cursor=${encodeURIComponent(requestedCursor)}` : ''}`);
+    // A slow response may arrive after the reader has started another swipe.
+    // Hold the prepend until that motion settles, without starting another read.
+    while (older && current === epoch && Date.now() - historyScrollAt < 180) {
+      await new Promise(resolve => setTimeout(resolve, 180));
+    }
     if (current !== epoch) return;
     if (older) {
-      const height = scroller.scrollHeight, top = scroller.scrollTop;
+      // Stop automatic paging if the source cannot advance, rather than loop.
+      if (page.nextCursor && (page.nextCursor === requestedCursor || !page.data.some(entry => !items.has(`${entry.turnId}/${entry.item.id}`)))) throw new Error('Earlier history did not advance. Try loading it again.');
       const combined = new Map(page.data.map(entry => [`${entry.turnId}/${entry.item.id}`, entry]));
       for (const [key, value] of items) combined.set(key, value);
       items.clear(); for (const [key, value] of combined) items.set(key, value);
-      render(true); scroller.scrollTop = top + scroller.scrollHeight - height; previousScrollTop = scroller.scrollTop;
+      cursor = page.nextCursor; historyFailed = false;
+      render(true); updateHistoryControl(); restoreReaderAnchor();
     } else {
       for (const entry of page.data) items.set(`${entry.turnId}/${entry.item.id}`, entry);
       render();
     }
     if (older || cursor === undefined) cursor = page.nextCursor;
-    $('older').hidden = !cursor || items.size >= 1000; setActivity(page.thread, page.blocked); selected = { ...page.thread, blocked: page.blocked, question: page.question ?? null }; ready = true; observeCompletions([page.thread]); markCurrentViewed(); renderThreads(); updateComposer(); $('error').textContent = '';
-  } catch (err) { if (current === epoch) error(err); }
-  finally { busy = false; if (dirty) { dirty = false; schedule(); } }
+    updateHistoryControl(); setActivity(page.thread, page.blocked); selected = { ...page.thread, blocked: page.blocked, question: page.question ?? null }; ready = true; observeCompletions([page.thread]); markCurrentViewed(); renderThreads(); updateComposer(); $('error').textContent = '';
+  } catch (err) { if (current === epoch) { if (older) historyFailed = true; error(err); } }
+  finally {
+    busy = false;
+    if (current === epoch) { historyLoading = false; updateHistoryControl(); restoreReaderAnchor(); }
+    if (dirty) { dirty = false; schedule(); }
+    if (current === epoch && historyAutoArmed) scheduleEarlierHistory();
+  }
+}
+function updateHistoryControl() {
+  // Retain the loading row's space at the beginning of a paged transcript.
+  // Otherwise hiding it on the last page can require a negative scroll offset.
+  if (cursor) $('older').parentElement.dataset.paged = 'true';
+  $('older').hidden = !cursor || items.size >= 1000;
+  $('older').disabled = historyLoading;
+  $('older').textContent = historyLoading ? 'Loading earlier messages…' : historyFailed ? 'Retry earlier messages' : 'Load earlier messages';
+}
+function maybeLoadEarlier() {
+  if (!historyAutoArmed || !ready || followLatest || busy || historyFailed || scroller.scrollTop > 160) return;
+  void hydrate(true);
+}
+function scheduleEarlierHistory() {
+  clearTimeout(historyScrollTimer);
+  const current = epoch;
+  // Wait for scrolling to settle. In particular, don't adjust scrollTop while
+  // iOS is still applying touch momentum, or react to our own prepend offset.
+  historyScrollTimer = setTimeout(() => {
+    historyScrollTimer = undefined;
+    if (current === epoch) maybeLoadEarlier();
+  }, 180);
 }
 function schedule() { if (!timer) timer = setTimeout(() => { timer = undefined; void hydrate(); }, 250); }
 function select(thread, navigate = false) {
   if (navigate) recordConversation(thread);
-  source?.close(); ++epoch; selected = thread; ready = false; initialTranscript = true; followLatest = true; viewportFollowLock = false; setView('conversation'); items.clear(); cursor = undefined;
+  source?.close(); ++epoch; selected = thread; ready = false; initialTranscript = true; followLatest = true; viewportFollowLock = false; historyLoading = false; historyFailed = false; historyAutoArmed = true; setView('conversation'); items.clear(); cursor = undefined;
   $('picker').hidden = true; $('conversation').hidden = false; $('title').textContent = titleFor(thread); $('project').textContent = projectName(thread); $('project').title = thread.cwd;
   const avatar = avatarFor(thread); $('contact-avatar').textContent = avatar.text; $('contact-avatar').style.setProperty('--avatar', avatar.color); renderThreads();
   $('history-bound').hidden = true; $('older').hidden = true; $('new-content').hidden = true;
+  delete $('older').parentElement.dataset.paged;
   $('draft').value = drafts.get(thread.id) ?? ''; $('transcript').replaceChildren(); previousScrollTop = scroller.scrollTop; showActivity('Connecting', 'connecting'); resizeDraft(); updateComposer();
   source = new EventSource(`/api/threads/${thread.id}/events`);
   const current = epoch;
@@ -514,7 +594,7 @@ window.addEventListener('popstate', event => {
   }
   history.replaceState(listNavigation(), ''); returnToList();
 });
-$('scope-loaded').onclick = () => setPickerScope('loaded'); $('scope-all').onclick = () => setPickerScope('all'); $('filter').oninput = event => setPickerQuery(event.target.value); $('more-threads').onclick = () => { if (!pickerLoading) void loadPicker({ append: true }); }; $('older').onclick = () => hydrate(true);
+$('scope-loaded').onclick = () => setPickerScope('loaded'); $('scope-all').onclick = () => setPickerScope('all'); $('filter').oninput = event => setPickerQuery(event.target.value); $('more-threads').onclick = () => { if (!pickerLoading) void loadPicker({ append: true }); }; $('older').onclick = () => { historyFailed = false; void hydrate(true); };
 $('new-content').onclick = () => { followLatest = true; scrollToLatest(); settleBottom(); };
 document.addEventListener('visibilitychange', () => { if (document.hidden) { ++epoch; source?.close(); ready = false; updateComposer(); } else void bootstrap(); });
 window.addEventListener('pageshow', event => { if (event.persisted) void bootstrap(); });
@@ -639,20 +719,31 @@ $('draft').addEventListener('pointerdown', () => { if (followLatest) viewportFol
 document.addEventListener('focusout', scheduleViewport);
 fitViewport();
 scroller.addEventListener('scroll', () => {
+  const delta = scroller.scrollTop - previousScrollTop;
+  if (Math.abs(delta) > 1) { historyScrollAt = Date.now(); readerAnchor = undefined; }
   // Layout/image changes can emit scroll events without a reader moving the view.
   if (!viewportFollowLock && Math.abs(scroller.scrollTop - previousScrollTop) > 1) followLatest = atBottom();
   if (viewportFollowLock && followLatest && !atBottom()) settleBottom();
   previousScrollTop = scroller.scrollTop;
   $('new-content').hidden = viewportFollowLock && followLatest ? true : atBottom();
   if (atBottom()) markCurrentViewed();
+  if (scroller.scrollTop > 160) historyAutoArmed = true;
+  else if (historyAutoArmed) scheduleEarlierHistory();
 });
 // Only real reading gestures cancel a viewport-follow lock, not keyboard auto-scroll.
-for (const type of ['pointerdown', 'touchstart', 'wheel']) scroller.addEventListener(type, () => { viewportFollowLock = false; }, { passive: true });
-scroller.addEventListener('keydown', event => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) viewportFollowLock = false; });
+function readingGesture() {
+  viewportFollowLock = false;
+  readerAnchor = undefined;
+  historyAutoArmed = true;
+  scheduleEarlierHistory();
+}
+for (const type of ['pointerdown', 'touchstart', 'touchmove', 'wheel']) scroller.addEventListener(type, readingGesture, { passive: true });
+scroller.addEventListener('keydown', event => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) readingGesture(); });
 // Images, composer controls and viewport changes can settle after initial hydration.
-const transcriptObserver = new ResizeObserver(settleBottom);
+const transcriptObserver = new ResizeObserver(() => { restoreReaderAnchor(); settleBottom(); });
 transcriptObserver.observe($('transcript'));
 transcriptObserver.observe(scroller);
+scroller.addEventListener('load', () => { restoreReaderAnchor(); settleBottom(); }, true);
 // An outside tap dismisses the menu before underlying controls can act.
 document.addEventListener('pointerdown', event => {
   if ($('settings').open && !$('settings').contains(event.target)) event.preventDefault();

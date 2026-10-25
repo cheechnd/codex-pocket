@@ -11,6 +11,7 @@ export class AttachmentStore {
   readonly directory: string;
   private tail: Promise<unknown> = Promise.resolve();
   private processing = 0;
+  private dimensions = new Map<string, { width: number; height: number }>();
   constructor(directory: string, readonly capacity = 512 * 1024 * 1024) { this.directory = resolve(directory); }
   async prepare(thread: string, submission: unknown, images: unknown): Promise<string[]> {
     if (this.processing >= 2) throw new PocketError('capacity', 'Images are being processed; try again shortly');
@@ -74,12 +75,24 @@ export class AttachmentStore {
         try { names = JSON.parse(await readFile(resolve(this.directory, `${digest(JSON.stringify([thread, entry.item.clientId]))}.json`), 'utf8')); } catch { /* Desktop images may not belong to Pocket. */ }
       }
       let index = 0;
-      const content = (entry.item.content ?? []).map((part: any) => {
+      const content = await Promise.all((entry.item.content ?? []).map(async (part: any) => {
         if (!['image', 'localImage'].includes(part.type)) return part;
         const ownPath = typeof part.path === 'string' && resolve(part.path) === resolve(this.directory, basename(part.path)) && imageName.test(basename(part.path)) ? basename(part.path) : undefined;
         const name = names[index++] ?? ownPath;
-        return { type: 'image', ...(name && imageName.test(name) ? { url: `/api/attachments/${name.split('.')[0]}` } : {}) };
-      });
+        if (!name || !imageName.test(name)) return { type: 'image' };
+        let dimensions = this.dimensions.get(name);
+        if (!dimensions) {
+          try {
+            const metadata = await sharp(resolve(this.directory, name), { limitInputPixels: 32_000_000 }).metadata();
+            if (metadata.width && metadata.height && metadata.width <= 4096 && metadata.height <= 4096) {
+              dimensions = { width: metadata.width, height: metadata.height };
+              this.dimensions.set(name, dimensions);
+              if (this.dimensions.size > 1000) this.dimensions.delete(this.dimensions.keys().next().value!);
+            }
+          } catch { /* Unavailable image metadata must not prevent reading history. */ }
+        }
+        return { type: 'image', url: `/api/attachments/${name.split('.')[0]}`, ...dimensions };
+      }));
       return { ...entry, item: { ...entry.item, content } };
     })) };
   }

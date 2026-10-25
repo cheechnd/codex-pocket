@@ -140,7 +140,9 @@ computer; never start or repair it implicitly.
 - Human/assistant messages are distinct; preserve code formatting and allow copy.
 - Small tool/activity rows can expand to details. History is untrusted content:
   sanitize Markdown, disable raw HTML, and never auto-execute embedded content.
-- Paginate upward. Follow live output only when already near the bottom; otherwise
+- Load earlier history automatically near the top, one bounded page at a time,
+  preserving reading position. Keep an explicit retry after a load failure.
+  Follow live output only when already near the bottom; otherwise
   show a new-content affordance without moving the reader's scroll position.
 - Sticky multiline composer respects phone keyboard and safe-area insets.
   Explicit Send button; Enter inserts a newline. Disable accidental double taps.

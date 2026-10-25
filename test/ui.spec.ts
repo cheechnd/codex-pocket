@@ -78,6 +78,171 @@ test('settings reload refreshes the app without unpairing or losing text drafts'
   await expect(page.getByLabel('Message', { exact: true })).toHaveValue(text);
 });
 
+for (const width of [390, 1024]) test(`scrolling back loads earlier history once per page and keeps the reading position at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  const entries = Array.from({ length: 100 }, (_, i) => entry(i, { type: 'agentMessage', text: `History message ${i}: preserved reading position` }));
+  const requests: string[] = [], pending: Route[] = [];
+  await page.route('**/api/threads/*/history*', async route => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (cursor) { requests.push(cursor); pending.push(route); }
+    else await route.fulfill({ json: history(otherScratchThread, entries.slice(60), 'page-2') });
+  });
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('#transcript .message')).toHaveCount(40);
+  expect(requests).toEqual([]);
+  const scroller = page.locator('#message-scroll');
+  await scroller.evaluate(el => { el.scrollTop = 100; });
+  await expect.poll(() => requests).toEqual(['page-2']);
+  const anchor = page.locator('[data-key="ui-turn-60/ui-item-60"]');
+  const before = await anchor.boundingBox();
+  await expect(page.getByRole('button', { name: 'Loading earlier messages…' })).toBeDisabled();
+  await scroller.evaluate(el => { el.dispatchEvent(new Event('scroll')); el.dispatchEvent(new Event('scroll')); });
+  expect(requests).toEqual(['page-2']);
+  await pending.shift()!.fulfill({ json: history(otherScratchThread, entries.slice(30, 61), 'page-3') });
+  await expect(page.locator('#transcript .message')).toHaveCount(70);
+  expect(Math.abs((await anchor.boundingBox())!.y - before!.y)).toBeLessThan(2);
+  await scroller.evaluate(el => { el.scrollTop = 100; });
+  await expect.poll(() => requests).toEqual(['page-2', 'page-3']);
+  const secondAnchor = page.locator('[data-key="ui-turn-30/ui-item-30"]');
+  const secondBefore = await secondAnchor.boundingBox();
+  await pending.shift()!.fulfill({ json: history(otherScratchThread, entries.slice(0, 31)) });
+  await expect(page.locator('#transcript .message')).toHaveCount(100);
+  expect(Math.abs((await secondAnchor.boundingBox())!.y - secondBefore!.y)).toBeLessThan(2);
+  await expect(page.locator('#older')).toBeHidden();
+  await scroller.evaluate(el => { el.scrollTop = 0; });
+  expect(requests).toEqual(['page-2', 'page-3']);
+  expect(await page.locator('#transcript .message').evaluateAll(nodes => nodes.map(node => node.textContent!.match(/History message (\d+):/)![1]))).toEqual(entries.map((_, i) => String(i)));
+});
+
+test('earlier-history failures wait for explicit retry and late pages cannot enter another conversation', async ({ page }) => {
+  const entries = longTranscript(50);
+  let calls = 0, pending: Route | undefined;
+  await page.route('**/api/threads/*/history*', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes('thread-1/')) return route.fulfill({ json: history(scratchThread, [entry(200, { type: 'agentMessage', text: 'Different conversation' })]) });
+    if (!url.searchParams.has('cursor')) return route.fulfill({ json: history(otherScratchThread, entries, 'older') });
+    if (++calls === 1) return route.fulfill({ status: 503, json: { message: 'Temporary history failure' } });
+    pending = route;
+  });
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('#transcript .message')).toHaveCount(50);
+  await page.locator('#message-scroll').evaluate(el => { el.scrollTop = 0; });
+  await expect(page.getByRole('button', { name: 'Retry earlier messages' })).toBeVisible();
+  await page.locator('#message-scroll').evaluate(el => { for (let i = 0; i < 5; i++) el.dispatchEvent(new Event('scroll')); });
+  expect(calls).toBe(1);
+  await page.getByRole('button', { name: 'Retry earlier messages' }).click();
+  await expect.poll(() => Boolean(pending)).toBe(true);
+  await page.getByRole('button', { name: '← Conversations' }).click();
+  await page.getByRole('button', { name: /Scratch conversation/ }).click();
+  await pending!.fulfill({ json: history(otherScratchThread, [entry(201, { type: 'agentMessage', text: 'Stale earlier page' })]) });
+  await expect(page.locator('#transcript')).toContainText('Different conversation');
+  await expect(page.locator('#transcript')).not.toContainText('Stale earlier page');
+});
+
+test('a non-advancing history page stops automatic requests and can be retried', async ({ page }) => {
+  const entries = longTranscript(50);
+  let olderCalls = 0;
+  await page.route('**/api/threads/*/history*', route => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (!cursor) return route.fulfill({ json: history(otherScratchThread, entries, 'older') });
+    olderCalls++;
+    return route.fulfill({ json: olderCalls === 1 ? history(otherScratchThread, [], 'older') : history(otherScratchThread, [entry(100, { type: 'agentMessage', text: 'Recovered older history' })]) });
+  });
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('#transcript .message')).toHaveCount(50);
+  await page.locator('#message-scroll').evaluate(el => { el.scrollTop = 0; });
+  await expect(page.getByRole('button', { name: 'Retry earlier messages' })).toBeVisible();
+  await page.locator('#message-scroll').evaluate(el => el.dispatchEvent(new Event('scroll')));
+  expect(olderCalls).toBe(1);
+  await page.getByRole('button', { name: 'Retry earlier messages' }).click();
+  await expect(page.locator('#transcript .message')).toHaveCount(51);
+  await expect(page.locator('#older')).toBeHidden();
+  expect(olderCalls).toBe(2);
+});
+
+test('history prepends keep decoded images mounted and do not chain on their own scroll adjustment', async ({ page }) => {
+  const imagePath = `/api/attachments/${'c'.repeat(64)}`;
+  const data = [entry(300, { type: 'userMessage', content: [{ type: 'image', url: imagePath }] }), ...longTranscript(50)];
+  let pending: Route | undefined, olderCalls = 0;
+  await page.route(`**${imagePath}`, route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160"/>' }));
+  await page.route('**/api/threads/*/history*', route => {
+    if (!new URL(route.request().url()).searchParams.has('cursor')) return route.fulfill({ json: history(otherScratchThread, data, 'page-2') });
+    olderCalls++; pending = route;
+  });
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('#transcript .message-image')).toHaveCount(1);
+  await page.locator('#message-scroll').evaluate(el => { el.scrollTop = 0; });
+  await expect.poll(() => Boolean(pending)).toBe(true);
+  await expect.poll(() => page.locator('.message-image').evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(160);
+  await page.evaluate(() => { (window as any).__mountedHistoryImage = document.querySelector('.message-image'); });
+  await pending!.fulfill({ json: history(otherScratchThread, [entry(301, { type: 'reasoning', text: 'Earlier activity' })], 'page-3') });
+  await expect(page.locator('#transcript .message')).toHaveCount(52);
+  expect(await page.evaluate(() => document.querySelector('.message-image') === (window as any).__mountedHistoryImage)).toBe(true);
+  const before = await page.locator('.message-image').boundingBox();
+  // Allow pending scroll/resize callbacks to run: the prepend itself must not
+  // trigger another fetch or reflow a previously decoded image.
+  await page.waitForTimeout(400);
+  expect(olderCalls).toBe(1);
+  expect(await page.locator('.message-image').boundingBox()).toEqual(before);
+  // Another touch at the top must work even if Safari reports no scroll delta.
+  await page.locator('#message-scroll').dispatchEvent('touchstart');
+  await expect.poll(() => olderCalls).toBe(2);
+  await pending!.fulfill({ json: history(otherScratchThread, [entry(302, { type: 'agentMessage', text: 'Next earlier page' })]) });
+  await expect(page.locator('#transcript')).toContainText('Next earlier page');
+});
+
+for (const width of [390, 1024]) for (const metadata of [true, false]) test(`delayed images above the reader preserve the visible message at ${width}px (dimensions: ${metadata})`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  const imagePath = `/api/attachments/${'d'.repeat(64)}`;
+  let imageRoute: Route | undefined;
+  await page.route(`**${imagePath}`, route => { imageRoute = route; });
+  await page.route('**/api/threads/*/history*', route => {
+    const older = new URL(route.request().url()).searchParams.has('cursor');
+    return route.fulfill({ json: history(otherScratchThread, older ? [entry(200, { type: 'userMessage', content: [{ type: 'image', url: imagePath, ...(metadata ? { width: 300, height: 240 } : {}) }] })] : longTranscript(50), older ? null : 'older') });
+  });
+  await pair(page); await page.getByRole('button', { name: /Other conversation/ }).click();
+  await expect(page.locator('#transcript .message')).toHaveCount(50);
+  await page.locator('#message-scroll').evaluate(el => { el.scrollTop = 0; });
+  const anchor = page.locator('[data-key="ui-turn-0/ui-item-0"]');
+  const before = await anchor.boundingBox();
+  await expect.poll(() => Boolean(imageRoute)).toBe(true);
+  await expect(page.locator('#transcript .message')).toHaveCount(51);
+  await expect.poll(async () => Math.abs((await anchor.boundingBox())!.y - before!.y)).toBeLessThan(2);
+  const reservedHeight = (await page.locator('.message-image').boundingBox())!.height;
+  if (metadata) expect(reservedHeight).toBeGreaterThan(150);
+  await imageRoute!.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="240"/>' });
+  await expect.poll(() => page.locator('.message-image').evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(240);
+  if (metadata) expect((await page.locator('.message-image').boundingBox())!.height).toBeCloseTo(reservedHeight, 0);
+  await expect.poll(async () => Math.abs((await anchor.boundingBox())!.y - before!.y)).toBeLessThan(2);
+  await page.waitForTimeout(250);
+  expect(Math.abs((await anchor.boundingBox())!.y - before!.y)).toBeLessThan(2);
+});
+
+test('scrolling to the top during a live refresh queues history until the refresh finishes', async ({ page }) => {
+  const data = longTranscript(50);
+  let latestCalls = 0, olderCalls = 0, refresh: Route | undefined;
+  await page.route('**/api/threads/*/history*', route => {
+    if (new URL(route.request().url()).searchParams.has('cursor')) {
+      olderCalls++;
+      return route.fulfill({ json: history(scratchThread, [entry(200, { type: 'agentMessage', text: 'Queued earlier history' })]) });
+    }
+    if (++latestCalls === 1) return route.fulfill({ json: history(scratchThread, data, 'older') });
+    refresh = route;
+  });
+  await pair(page); await page.getByRole('button', { name: /Scratch conversation/ }).click();
+  await expect(page.locator('#transcript .message')).toHaveCount(50);
+  await page.request.get('http://127.0.0.1:44319/change');
+  await expect.poll(() => Boolean(refresh)).toBe(true);
+  await page.locator('#message-scroll').dispatchEvent('touchstart');
+  await page.locator('#message-scroll').evaluate(el => { el.scrollTop = 0; });
+  // Let the scroll-idle trigger fire while the history transport is occupied.
+  await page.waitForTimeout(250);
+  expect(olderCalls).toBe(0);
+  await refresh!.fulfill({ json: history(scratchThread, data, 'older') });
+  await expect(page.locator('#transcript')).toContainText('Queued earlier history');
+  expect(olderCalls).toBe(1);
+});
+
 test('mobile composer stays in the viewport with a long transcript', async ({ page }) => {
   await routeHistory(page, (threadId) => history(
     threadId === 'thread-2' ? otherScratchThread : scratchThread,

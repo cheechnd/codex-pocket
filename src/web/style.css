@@ -143,3 +143,4 @@
 }
 #reload{background:none;border:0;border-top:1px solid var(--border);padding:12px 0 7px;margin-top:7px;text-align:left;color:var(--blue);font:inherit;font-size:13px;min-height:44px;cursor:pointer}
 #reload+#logout{margin-top:0;padding-bottom:5px;min-height:44px}
+.history-controls[data-paged="true"]{min-height:36px}
