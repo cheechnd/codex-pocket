@@ -205,3 +205,27 @@ test('closing and reopening the app preserves text and uncertain-send protection
     expect(await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'))).toBeNull();
   } finally { await context?.close(); await rm(profile, { recursive: true, force: true }); }
 });
+
+test('opening generated-image history keeps the daemon connected and sends no embedded image bytes to the browser', async ({ page, request }) => {
+  await request.get('http://127.0.0.1:44319/large-image-history');
+  try {
+    await page.setViewportSize({ width: 1024, height: 844 });
+    await page.goto('/');
+    const code = await (await request.get('http://127.0.0.1:44319/code')).text();
+    await page.getByLabel('Pairing code').fill(code);
+    await page.getByRole('button', { name: 'Pair this device', exact: true }).click();
+    await page.getByRole('button', { name: /Scratch conversation/ }).click();
+    await expect(page.locator('#transcript')).toContainText('Generated image history loaded');
+    await expect(page.locator('#connection')).toHaveAttribute('data-state', 'connected');
+    const response = await page.request.get('/api/threads/thread-1/history');
+    expect(response.ok()).toBe(true);
+    const body = await response.text();
+    expect(body.length).toBeLessThan(10_000);
+    expect(JSON.parse(body).data.find((entry: any) => entry.item.type === 'imageGeneration').item.result).toBeUndefined();
+    await page.getByRole('button', { name: /Other conversation/ }).click();
+    await expect(page.locator('#connection')).toHaveAttribute('data-state', 'connected');
+    await page.getByRole('button', { name: /Scratch conversation/ }).click();
+    await expect(page.locator('#transcript')).toContainText('Generated image history loaded');
+    await expect(page.locator('#error')).toBeEmpty();
+  } finally { await request.get('http://127.0.0.1:44319/change'); }
+});

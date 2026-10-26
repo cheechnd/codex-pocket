@@ -158,7 +158,14 @@ export class DaemonAdapter extends EventEmitter {
     if (!Array.isArray(page.data) || page.data.length > 50 || page.data.some(e => !e.turnId || !e.item?.id)) throw new PocketError('incompatible', 'Bounded item history unsupported by this daemon');
     // Keep sequence conservative: SSE hydration buffers are reconciled by item IDs.
     const recent: Page = cursor ? await this.transport.request('thread/items/list', { threadId: id, cursor: null, limit: 50, sortDirection: 'desc' }) : page;
-    return { data: [...page.data].reverse(), nextCursor: page.nextCursor, thread: await this.read(id), sequence: this.sequence, blocked: !!this.blocked.get(id)?.size, question: this.pendingQuestion(id, recent.data) };
+    const data = [...page.data].reverse().map(entry => {
+      if (entry.item.type !== 'imageGeneration') return entry;
+      // Keep the activity/status, but don't transfer the tool's embedded image
+      // bytes to every browser. Generated-image previews aren't supported here.
+      const { result: _result, ...summary } = entry.item as Entry['item'] & { result?: unknown };
+      return { ...entry, item: summary };
+    });
+    return { data, nextCursor: page.nextCursor, thread: await this.read(id), sequence: this.sequence, blocked: !!this.blocked.get(id)?.size, question: this.pendingQuestion(id, recent.data) };
   }
   private finish(record: Submission, status: string) {
     record.state = status === 'completed' ? 'completed' : 'failed';

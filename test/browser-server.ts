@@ -11,6 +11,15 @@ const app = createApp(adapter, 44318, { access: { authenticate: (...args: Parame
 // Separate test-only control port, never included in production server.
 import { createServer } from 'node:http';
 const control = createServer((req, res) => {
+  if (req.url === '/large-image-history') {
+    mock.metadata('thread-1', { name: 'Scratch conversation', preview: 'Large image history fixture' });
+    mock.metadata('thread-2', { name: 'Other conversation', preview: 'Other fixture' });
+    mock.entries([
+      { turnId: 'image-turn', item: { id: 'large-image', type: 'imageGeneration', status: 'completed', result: 'A'.repeat(4 * 1024 * 1024) } } as any,
+      { turnId: 'image-turn', item: { id: 'image-answer', type: 'agentMessage', text: 'Generated image history loaded' } },
+    ]);
+    res.end('ok'); return;
+  }
   if (req.url === '/picker-fixture') { mock.metadata('thread-1', { name: null, preview: '', updatedAt: 9999, recencyAt: 9999 }); mock.metadata('thread-2', { name: null, preview: 'Real unnamed conversation', updatedAt: 999, recencyAt: 10 }); res.end('ok'); return; }
   if (req.url === '/launch') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><a href="http://127.0.0.1:44318/">Open Pocket</a>'); return; }
   if (req.url === '/timeout') { mock.turnMode('timeout'); res.end('ok'); return; }

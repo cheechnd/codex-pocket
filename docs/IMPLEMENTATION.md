@@ -9,6 +9,9 @@ experimental protocol compatibility is not a promise for every daemon version.
 
 - Explicit Unix-WebSocket daemon connection, initialization, bounded requests,
   capability checks, disconnect cleanup, and capped reconnection backoff.
+  Responses have a 32 MiB ceiling to accommodate generated-image history;
+  embedded image-generation results are removed from browser history while
+  their activity/status remains visible. Other history text stays unchanged.
 - Loaded conversation picker and metadata-only saved conversation browsing with
   search and pagination. Opening a saved conversation is an explicit ID-only
   resume that does not override policy, model, instructions, or working directory.

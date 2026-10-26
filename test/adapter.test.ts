@@ -23,6 +23,41 @@ test('explicit loaded attach is shared; history is bounded; browser release neve
   await assert.rejects(adapter.attach('unloaded'), /already loaded/);
   assert.equal(mock.calls.filter(c => c.method === 'thread/resume').length, 1);
 });
+test('generated-image history larger than 2 MiB loads without dropping concurrent reads or leaking embedded bytes', async t => {
+  const { adapter, transport, mock } = await setup(t, 1000);
+  mock.entries([
+    { turnId: 'image-turn', item: { id: 'image-result', type: 'imageGeneration', status: 'completed', result: 'A'.repeat(4 * 1024 * 1024) } } as any,
+    { turnId: 'image-turn', item: { id: 'image-reply', type: 'agentMessage', text: '  Your image is ready.\n' } },
+  ]);
+  const [page, list] = await Promise.all([adapter.history('thread-1'), adapter.list()]);
+  assert.equal(transport.state, 'connected'); assert.ok(list.length);
+  assert.equal(page.data.length, 2);
+  assert.deepEqual(page.data[0].item, { id: 'image-result', type: 'imageGeneration', status: 'completed' });
+  assert.equal(page.data[1].item.text, '  Your image is ready.\n');
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) < 10_000);
+  assert.equal((await adapter.history('thread-1', 'older')).data[0].item.id, 'old');
+  mock.disconnect(); await new Promise(resolve => setTimeout(resolve, 10));
+  await transport.connect();
+  assert.equal((await adapter.history('thread-1')).data.length, 2);
+  assert.equal(transport.state, 'connected');
+  assert.equal(mock.calls.some(c => /^turn\/(start|steer)$/.test(c.method)), false);
+});
+test('oversized responses remain bounded and uncertain writes are never treated as retryable reads', async t => {
+  const mock = await mockDaemon();
+  const transport = new Transport(mock.socket, 1000, 64 * 1024);
+  t.after(async () => { transport.close(); await mock.close(); });
+  await transport.connect();
+  mock.entries([{ turnId: 'large-turn', item: { id: 'large-item', type: 'agentMessage', text: 'x'.repeat(128 * 1024) } }]);
+  await assert.rejects(transport.request('thread/items/list', { threadId: 'thread-1' }), { code: 'size' });
+  assert.equal(transport.state, 'offline');
+  await transport.connect(); mock.hold(true);
+  const pending = transport.request('test-write', {}, true);
+  const rejected = assert.rejects(pending, { code: 'outcome-unknown' });
+  mock.notice({ method: 'large-notice', params: { data: 'x'.repeat(128 * 1024) } });
+  await rejected;
+  mock.hold(false); mock.entries([]); await transport.connect();
+  assert.ok((await transport.request('thread/loaded/list')).data.length);
+});
 test('exact text, same-ID deduplication, conflicting reuse and concurrent submissions', async t => {
   const { adapter, mock } = await setup(t);
   mock.turnMode('hold');

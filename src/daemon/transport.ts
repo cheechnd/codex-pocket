@@ -13,7 +13,8 @@ export class Transport extends EventEmitter {
   private connecting?: Promise<void>;
   state: 'offline' | 'connecting' | 'connected' | 'incompatible' = 'offline';
   version?: string;
-  constructor(readonly socketPath: string, readonly timeoutMs = 15_000) { super(); }
+  // Generated-image results can exceed 2 MiB even in a bounded history page.
+  constructor(readonly socketPath: string, readonly timeoutMs = 15_000, readonly maxResponseBytes = 32 * 1024 * 1024) { super(); }
   connect(): Promise<void> {
     if (this.state === 'connected') return Promise.resolve();
     return this.connecting ??= this.open().finally(() => { this.connecting = undefined; });
@@ -24,7 +25,7 @@ export class Transport extends EventEmitter {
     try {
       const socket = await realpath(this.socketPath);
       if (!(await stat(socket)).isSocket()) throw new PocketError('endpoint', 'Selected endpoint is not a Unix socket');
-      const ws = this.ws = new WebSocket(`ws+unix://${socket}:/`, { maxPayload: 2 * 1024 * 1024, handshakeTimeout: this.timeoutMs });
+      const ws = this.ws = new WebSocket(`ws+unix://${socket}:/`, { maxPayload: this.maxResponseBytes, handshakeTimeout: this.timeoutMs });
       ws.on('message', data => {
         if (generation !== this.generation) return;
         try {
@@ -42,7 +43,11 @@ export class Transport extends EventEmitter {
         } catch { ws.close(1002, 'Invalid protocol message'); }
       });
       ws.on('close', () => { if (generation === this.generation) this.disconnected(); });
-      ws.on('error', () => { if (generation === this.generation) this.disconnected(); });
+      ws.on('error', error => {
+        if (generation !== this.generation) return;
+        const sizeError = (error as NodeJS.ErrnoException).code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH';
+        this.disconnected(sizeError ? new PocketError('size', 'Daemon response exceeds the supported size limit') : undefined);
+      });
       await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); ws.once('close', () => reject(new Error('Daemon closed during handshake'))); });
       const info = await this.request('initialize', { clientInfo: { name: 'codex_pocket', title: 'Codex Pocket', version: '0.1.0' }, capabilities: { experimentalApi: true, requestAttestation: false } });
       this.version = String(info.userAgent ?? info.version ?? 'unknown');
@@ -77,10 +82,10 @@ export class Transport extends EventEmitter {
       });
     });
   }
-  private disconnected() {
+  private disconnected(error?: PocketError) {
     this.state = 'offline';
     for (const p of this.pending.values()) {
-      clearTimeout(p.timer); p.reject(new PocketError(p.write ? 'outcome-unknown' : 'offline', p.write ? 'Write outcome unknown; do not retry' : 'Daemon disconnected'));
+      clearTimeout(p.timer); p.reject(new PocketError(p.write ? 'outcome-unknown' : error?.code ?? 'offline', p.write ? 'Write outcome unknown; do not retry' : error?.message ?? 'Daemon disconnected'));
     }
     this.pending.clear(); this.emit('state');
   }
