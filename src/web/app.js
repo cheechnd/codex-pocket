@@ -454,12 +454,37 @@ function updateComposer() {
   $('check-submission').hidden = pending?.state !== 'outcome-unknown';
   renderAttachments();
 }
+let attachmentPreview;
+function openAttachmentPreview(image, pointer = false) {
+  if (!selected) return;
+  attachmentPreview = { threadId: selected.id, imageId: image.id };
+  $('attachment-preview').dataset.pointer = String(pointer);
+  $('attachment-preview-name').textContent = image.name;
+  $('attachment-preview-image').alt = image.name;
+  $('attachment-preview-image').src = image.dataUrl;
+  if (!$('attachment-preview').open) $('attachment-preview').showModal();
+}
+$('attachment-preview-close').onclick = () => $('attachment-preview').close();
+$('attachment-preview').addEventListener('keydown', () => { delete $('attachment-preview').dataset.pointer; });
+$('attachment-preview').addEventListener('pointerdown', () => { $('attachment-preview').dataset.pointer = 'true'; });
+$('attachment-preview').addEventListener('close', () => {
+  const previous = attachmentPreview; attachmentPreview = undefined;
+  $('attachment-preview-image').removeAttribute('src');
+  $('attachment-preview-image').alt = ''; $('attachment-preview-name').textContent = '';
+  if (selected?.id === previous?.threadId) {
+    [...$('attachments').querySelectorAll('.attachment-open')].find(button => button.dataset.imageId === previous.imageId)?.focus({ preventScroll: true });
+  }
+});
 function renderAttachments() {
   const tray = $('attachments'); tray.replaceChildren();
   const current = selected ? attachments.get(selected.id) ?? [] : [];
+  if ($('attachment-preview').open && (attachmentPreview?.threadId !== selected?.id || !current.some(image => image.id === attachmentPreview?.imageId))) $('attachment-preview').close();
   for (const image of current) {
     const figure = document.createElement('figure'); figure.className = 'attachment';
-    const preview = document.createElement('img'); preview.src = image.dataUrl; preview.alt = image.name; preview.loading = 'lazy'; figure.append(preview);
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'attachment-open'; open.dataset.imageId = image.id;
+    open.setAttribute('aria-label', `Preview image ${image.name}`); open.setAttribute('aria-haspopup', 'dialog');
+    const preview = document.createElement('img'); preview.src = image.dataUrl; preview.alt = image.name; preview.loading = 'lazy'; open.append(preview);
+    open.onclick = event => openAttachmentPreview(image, event.detail > 0); figure.append(open);
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'attachment-remove'; remove.setAttribute('aria-label', `Remove image ${image.name}`); remove.title = `Remove ${image.name}`; remove.textContent = '×';
     remove.onclick = () => { const next = (attachments.get(selected.id) ?? []).filter(entry => entry.id !== image.id); attachments.set(selected.id, next); renderAttachments(); updateComposer(); };
     figure.append(remove); tray.append(figure);
@@ -622,6 +647,7 @@ setInterval(async () => {
 
 
 function showPairing() {
+  if ($('attachment-preview').open) $('attachment-preview').close();
   readReceipts.clear(); try { localStorage.removeItem(readReceiptKey); } catch {}
   navigationThreads.clear(); backPending = false; history.replaceState(listNavigation(), '');
   authenticated = false; connected = false; ready = false; ++epoch; source?.close(); selected = undefined;

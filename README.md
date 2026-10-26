@@ -103,8 +103,9 @@ messaging, a service worker, or cached conversation data.
 ## Screenshots
 
 Paste an image into Message, or tap the paperclip to choose screenshots/photos.
-Remove a preview with ×, then tap Send with or without accompanying text. Up to
-four images are supported. Images are resized to at most 4096 pixels per edge;
+Tap an attached thumbnail to preview the full image; Close or Escape returns to
+the unchanged draft. Remove an attachment with ×, then tap Send with or without
+accompanying text. Up to four images are supported. Images are resized to at most 4096 pixels per edge;
 prepared images are limited to 8 MiB each and 20 MiB total. A source file may be
 up to 20 MiB and must be decodable by the browser (PNG/JPEG screenshots work).
 Text drafts survive refreshes and app restarts; unsent images stay in memory

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import sharp from 'sharp';
 
 const png1x1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -99,6 +100,70 @@ test('image-only file picker sends an exact image payload and text+image paste d
   expect(isolated.requests).toHaveLength(2);
   expect(isolated.requests[1].body).toMatchObject({ text: '  pasted exact text\n🙂  ', images: [{ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) }] });
   expect(isolated.requests[1].body.clientSubmissionId).toEqual(expect.any(String));
+});
+
+for (const width of [390, 1024]) test(`draft screenshots open uncropped previews and close without sending or losing drafts at ${width}px`, async ({ page, request }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.emulateMedia({ colorScheme: width === 1024 ? 'dark' : 'light' });
+  const isolated = await installIsolatedRoutes(page); await pair(page, request); await openThread(page);
+  const text = '  Compare screenshots\nkeep this draft 📝  ';
+  await page.getByLabel('Message', { exact: true }).fill(text);
+  const screenshot = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1200"><rect width="800" height="1200" fill="#eef2f8"/><rect x="40" y="40" width="720" height="120" rx="16" fill="#6681ad"/><text x="80" y="115" font-size="40" fill="white">Screenshot one</text><rect x="40" y="220" width="720" height="900" rx="16" fill="white"/></svg>')).png().toBuffer();
+  await page.locator('#image-input').setInputFiles([
+    { name: 'screen-one.png', mimeType: 'image/png', buffer: screenshot },
+    { name: 'screen-two.png', mimeType: 'image/png', buffer: png1x1 },
+  ]);
+  await expect(page.locator('#attachments img')).toHaveCount(2);
+  const sources = await page.locator('#attachments img').evaluateAll(nodes => nodes.map(node => node.getAttribute('src')));
+  const first = page.getByRole('button', { name: 'Preview image screen-one.png', exact: true });
+  await first.click();
+  const dialog = page.getByRole('dialog', { name: 'Attachment preview' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.getByRole('button', { name: 'Close', exact: true }).evaluate(button => getComputedStyle(button).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+  expect(await dialog.getByRole('button', { name: 'Close', exact: true }).evaluate(button => getComputedStyle(button).outlineStyle)).toBe('none');
+  await expect(dialog.getByRole('img')).toHaveAttribute('src', sources[0]!);
+  await expect(dialog.getByText('screen-one.png', { exact: true })).toBeVisible();
+  await expect.poll(() => dialog.getByRole('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(800);
+  expect(await dialog.getByRole('img').evaluate(img => getComputedStyle(img).objectFit)).toBe('contain');
+  const bounds = (await dialog.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+  expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+  await page.screenshot({ path: `.local/draft-preview-${width}.png` });
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dialog).toBeHidden(); await expect(first).toBeFocused();
+  await page.getByRole('button', { name: 'Preview image screen-two.png', exact: true }).click();
+  await expect(dialog.getByRole('img')).toHaveAttribute('src', sources[1]!);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue(text);
+  await expect(page.locator('#attachments img')).toHaveCount(2);
+  expect(isolated.requests).toHaveLength(0);
+  await page.getByRole('button', { name: 'Remove image screen-two.png', exact: true }).click();
+  await expect(page.locator('#attachments img')).toHaveCount(1); await expect(dialog).toBeHidden();
+  await first.focus(); await page.keyboard.press('Enter'); await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+  expect(await dialog.getByRole('button', { name: 'Close', exact: true }).evaluate(button => getComputedStyle(button).outlineStyle)).not.toBe('none');
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(() => isolated.requests.length).toBe(1);
+  expect(isolated.requests[0].body).toMatchObject({ text, images: [{ dataUrl: sources[0] }] });
+});
+
+test('leaving a conversation closes its attachment preview while preserving that conversation draft', async ({ page, request }) => {
+  const isolated = await installIsolatedRoutes(page); await pair(page, request); await openThread(page);
+  await page.getByLabel('Message', { exact: true }).fill('Private screenshot draft');
+  await page.locator('#image-input').setInputFiles({ name: 'private.png', mimeType: 'image/png', buffer: png1x1 });
+  await page.getByRole('button', { name: 'Preview image private.png', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.locator('#attachment-preview-image')).not.toHaveAttribute('src');
+  await openThread(page, 'Image thread two');
+  await expect(page.locator('#attachments img')).toHaveCount(0);
+  await page.getByRole('button', { name: '← Conversations' }).click(); await openThread(page);
+  await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Private screenshot draft');
+  await expect(page.getByRole('button', { name: 'Preview image private.png', exact: true })).toBeVisible();
+  expect(isolated.requests).toHaveLength(0);
 });
 
 test('previews can be removed, image drafts stay with their thread, and files respect count/decoded/source limits', async ({ page, request }) => {
