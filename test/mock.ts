@@ -12,8 +12,10 @@ export async function mockDaemon() {
   let hold = false, incompatible = false, status = 'idle';
   let loadedIds = ['thread-1', 'thread-2'];
   let turnMode: 'normal' | 'hold' | 'timeout' | 'disconnect' | 'reject' = 'normal';
+  let threadStartMode: 'normal' | 'malformed' | 'reject' | 'timeout' | 'disconnect' = 'normal';
   let resumeMode: 'normal' | 'timeout' | 'disconnect' | 'timeout-accepted' | 'disconnect-accepted' = 'normal';
   let turnCount = 0;
+  let sessionCount = 0;
   const metadata = new Map<string, Record<string, unknown>>();
   let savedRecords: any[] = [
     { id: 'thread-1', name: 'Scratch conversation', cwd: '/scratch', preview: 'Hello', updatedAt: 1, recencyAt: 1, status: { type: 'idle' } },
@@ -29,6 +31,17 @@ export async function mockDaemon() {
       return;
     }
     if (msg.id === undefined || hold) return;
+    if (msg.method === 'thread/start') {
+      if (threadStartMode === 'reject') { ws.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: 'Cannot create thread' } })); return; }
+      const id = `new-thread-${++sessionCount}`;
+      loadedIds.push(id);
+      const thread = { id, name: null, cwd: msg.params.cwd, preview: undefined, updatedAt: 2, recencyAt: 2, status: { type: 'idle' } };
+      savedRecords.push(thread);
+      if (threadStartMode === 'disconnect') { ws.close(); return; }
+      if (threadStartMode === 'timeout') return;
+      ws.send(JSON.stringify({ id: msg.id, result: { thread: threadStartMode === 'malformed' ? { id } : thread } }));
+      return;
+    }
     if (msg.method === 'turn/steer') {
       if (turnMode === 'reject' || status !== 'active' || msg.params.expectedTurnId !== `sent-${turnCount}`) { ws.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: 'Active turn changed' } })); return; }
       const turnId = msg.params.expectedTurnId;
@@ -67,6 +80,7 @@ export async function mockDaemon() {
     loaded: (ids: string[]) => { loadedIds = [...ids]; },
     status: (value: string) => { status = value; },
     turnMode: (value: typeof turnMode) => { turnMode = value; },
+    threadStartMode: (value: typeof threadStartMode) => { threadStartMode = value; },
     resumeMode: (value: typeof resumeMode) => { resumeMode = value; },
     hold: (value: boolean) => { hold = value; }, incompatible: () => { incompatible = true; },
     entries: (value: Entry[]) => { entries = value; },

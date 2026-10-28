@@ -50,7 +50,7 @@ disconnect does not stop work or prevent the desktop's next message.
 
 ### Explicitly deferred
 
-- New conversation creation and browsing/restoring archived sessions.
+- Browsing/restoring archived sessions.
 - Answering blocking approval/question server requests from the browser.
 - Queue management and interrupt/cancel controls. Active-turn follow-ups and
   async question replies are supported as specified below.
@@ -124,6 +124,24 @@ ambiguous resume against loaded IDs. Read/history/events/send retain their loade
 ID guards, so there is no hidden activation or turn start on those routes. Keep
 per-thread text/image drafts and discard stale search/open UI responses after
 navigation. Existing daemon, auth and single-device assumptions remain unchanged.
+
+### New conversations (user-requested follow-on)
+
+Offer a New chat form with an existing absolute working directory or one new
+child directory under an explicitly selected existing parent. Suggest recent
+working directories without recursively browsing the filesystem. Require an
+initial exact-text message. Create directories without overwriting existing
+paths or initializing Git. Leave model, instructions, sandbox and approval
+settings to the daemon's normal configuration for that directory.
+
+Capture a client request ID before submission and retain a bounded server ledger
+so duplicate requests cannot create multiple conversations. Persist pending
+creation metadata in the browser across refreshes. An ambiguous thread/start
+must never be retried or matched by directory alone; direct the user to Codex CLI.
+Once a thread ID is known, preserve it even if the initial message fails. Reuse
+the existing submission ledger and unknown-send protection for the first message.
+Unpair clears the browser's pending creation state. No automatic approval,
+configuration changes, separate daemon, or API-key authentication is introduced.
 
 ## 3. UX
 
@@ -220,6 +238,9 @@ poc/             validated research client; reference, not production module
 | `GET /api/session`, `POST /api/pair`, `POST /api/logout` | Pairing and revocable device session |
 | `GET /api/status` | Health, daemon connectivity/version/capability limitations |
 | `GET /api/threads` | Loaded thread summaries only |
+| `GET /api/new-session/options` | Recent existing directories and default parent for New chat |
+| `POST /api/new-session` | Explicit directory, optional new child name, first text and client request ID |
+| `GET /api/new-session/:id` | Check a retained creation outcome without creating or resending |
 | `GET /api/saved-threads?search=...&cursor=...` | Bounded saved non-archived summaries; never activates |
 | `POST /api/threads/:id/open` | Explicit ID-only historical activation; empty JSON body |
 | `GET /api/threads/:id/history?cursor=...` | Bounded normalized transcript page |
@@ -229,8 +250,10 @@ poc/             validated research client; reference, not production module
 | `GET /api/submissions/:id` | Reconcile known submission outcome after browser disconnect |
 
 SSE plus POST is sufficient for MVP; browser WebSocket is optional. Browser
-requests cannot name arbitrary filesystem paths, daemon sockets, RPC methods, or
-hosts. Read/history/events/send IDs are validated against loaded conversations;
+requests cannot name daemon sockets, RPC methods, or hosts. Only New chat accepts
+an explicitly selected working directory and optional validated child name;
+attachment retrieval never accepts arbitrary desktop paths.
+Read/history/events/send IDs are validated against loaded conversations;
 only explicit open may validate and resume a saved, unloaded ID.
 
 ## 5. Delivery, concurrency, and reconnect semantics

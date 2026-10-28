@@ -9,6 +9,18 @@ const drafts = new Map(), attachments = new Map(), items = new Map(), submission
 // Text only, kept on this device across app sessions. Pending IDs guard against
 // duplicate sends even when the server no longer retains its outcome ledger.
 const draftStorageKey = 'pocket-drafts-v1';
+const newSessionStorageKey = 'pocket-new-session-v1';
+let pendingCreation, creationEpoch = 0;
+try {
+  const stored = JSON.parse(localStorage.getItem(newSessionStorageKey) ?? 'null');
+  if (stored && /^[0-9a-f-]{36}$/i.test(stored.requestId ?? '') && typeof stored.directory === 'string' && typeof stored.text === 'string') pendingCreation = { ...stored, state: stored.state === 'failed' ? 'failed' : 'outcome-unknown' };
+} catch { /* A malformed creation record must not prevent the app from loading. */ }
+function persistPendingCreation() {
+  try {
+    if (pendingCreation) localStorage.setItem(newSessionStorageKey, JSON.stringify(pendingCreation));
+    else localStorage.removeItem(newSessionStorageKey);
+  } catch { /* Storage denial must not prevent an explicit creation attempt. */ }
+}
 try {
   let raw = localStorage.getItem(draftStorageKey);
   // Carry over drafts saved by the earlier tab-scoped implementation.
@@ -92,11 +104,11 @@ function markCurrentViewed() {
   if (![...items.values()].some(entry => entry.turnId === turn.id)) return;
   receipt.seen = turn.id; saveReadReceipts(); renderThreads();
 }
-const setView = view => { $('app').dataset.view = view; $('welcome').hidden = view !== 'list'; };
+const setView = view => { $('app').dataset.view = view; $('welcome').hidden = view !== 'list'; $('new-session').hidden = view !== 'new-session'; };
 function icon(kind) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
   const path = document.createElementNS(svg.namespaceURI, 'path');
-  path.setAttribute('d', ({ chevron: 'm9 5 7 7-7 7', copy: 'M9 5H5v14h10v-4M9 3h10v12H9z', check: 'm5 12 4 4L19 6', up: 'M12 19V5m-6 6 6-6 6 6' })[kind]); svg.append(path); return svg;
+  path.setAttribute('d', ({ chevron: 'm9 5 7 7-7 7', copy: 'M9 5H5v14h10v-4M9 3h10v12H9z', check: 'm5 12 4 4L19 6', up: 'M12 19V5m-6 6 6-6 6 6', folder: 'M3 7V5h7l2 2h9v13H3Z' })[kind]); svg.append(path); return svg;
 }
 function projectName(thread) { return thread.cwd?.split('/').filter(Boolean).at(-1) || 'Codex'; }
 function avatarFor(thread) {
@@ -181,6 +193,142 @@ function renderThreads() {
   }
   $('more-threads').hidden = pickerScope !== 'all' || !pickerCursor || pickerLoading || threads.length >= 1000;
   if (!$('threads').childElementCount && !pickerLoading) { const empty = document.createElement('p'); empty.className = 'list-empty'; empty.textContent = pickerScope === 'loaded' && $('filter').value.trim() ? 'No results' : 'No conversations'; $('threads').append(empty); }
+}
+
+const newChatDraftKey = 'pocket-new-chat-draft-v1';
+let newSessionMode = 'existing', newSessionChosen = false, newSessionParent = '', newSessionEditor = false, newSessionChoosing = true;
+function newSessionKind() { return newSessionMode; }
+function persistNewChatDraft() {
+  try { localStorage.setItem(newChatDraftKey, JSON.stringify({ ...captureNewSessionForm(), chosen: newSessionChosen, editor: newSessionEditor })); } catch {}
+}
+function restoreNewChatDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(newChatDraftKey) ?? 'null');
+    if (!saved || typeof saved.text !== 'string' || typeof saved.directory !== 'string') return;
+    $('new-session-text').value = saved.text; $('new-session-directory').value = saved.directory;
+    $('new-session-folder').value = typeof saved.newDirectoryName === 'string' ? saved.newDirectoryName : '';
+    newSessionMode = saved.newDirectoryName !== undefined ? 'new' : 'existing'; newSessionChosen = !!saved.chosen;
+    newSessionEditor = !!saved.editor; newSessionChoosing = !newSessionChosen && !newSessionEditor;
+  } catch {}
+}
+function updateNewSessionForm() {
+  const locked = !!pendingCreation && ['creating', 'outcome-unknown'].includes(pendingCreation.state), failed = pendingCreation?.state === 'failed';
+  const path = $('new-session-directory').value, name = $('new-session-folder').value;
+  $('new-session-choose').hidden = !newSessionChoosing;
+  $('new-session-folder-editor').hidden = !newSessionEditor;
+  $('new-session-ready').hidden = newSessionChoosing || newSessionEditor;
+  $('new-session-folder-wrap').hidden = newSessionMode !== 'new';
+  $('new-session-editor-title').textContent = newSessionMode === 'new' ? 'New folder' : 'Use another folder';
+  $('new-session-directory-label').textContent = newSessionMode === 'new' ? 'Inside' : 'Folder path';
+  $('new-session-destination').textContent = newSessionMode === 'new' ? `${path.replace(/\/$/, '')}/${name || 'my-project'} · Created when you send` : 'Choose an existing folder on your computer.';
+  $('new-session-project-name').textContent = newSessionChosen ? (newSessionMode === 'new' ? name : path.split('/').filter(Boolean).at(-1) || path) : 'Choose project';
+  $('new-session-project-path').textContent = newSessionChosen ? (newSessionMode === 'new' ? `${path.replace(/\/$/, '')}/${name} · New folder` : path) : 'Select a folder to start';
+  $('new-session-change').setAttribute('aria-label', newSessionChosen ? 'Change project' : 'Choose project');
+  $('new-session-change').setAttribute('aria-expanded', String(newSessionChoosing || newSessionEditor));
+  $('new-session-status').textContent = pendingCreation?.message ?? '';
+  $('new-session-status').dataset.state = pendingCreation?.state ?? '';
+  $('new-session-start').hidden = failed;
+  $('new-session-start').disabled = locked || !connected || !newSessionChosen || newSessionEditor || !$('new-session-text').value.trim();
+  $('new-session-start').setAttribute('aria-busy', String(pendingCreation?.state === 'creating'));
+  $('new-session-check').hidden = !locked; $('new-session-retry').hidden = !failed;
+  for (const id of ['new-session-directory', 'new-session-folder', 'new-session-text', 'new-session-change', 'new-session-use-folder']) $(id).disabled = locked;
+}
+function chooseNewSession(path, mode = 'existing', editor = false) {
+  if (pendingCreation && pendingCreation.state !== 'failed') return;
+  if (pendingCreation) { pendingCreation = undefined; persistPendingCreation(); }
+  newSessionMode = mode; newSessionEditor = editor; newSessionChosen = !editor; newSessionChoosing = false;
+  $('new-session-directory').value = path; $('new-session-folder-error').textContent = '';
+  updateNewSessionForm(); persistNewChatDraft();
+  // Move focus to visible chrome, without summoning the keyboard.
+  $(editor ? 'new-session-editor-title' : 'new-session-change').focus({ preventScroll: true });
+}
+function closeNewSession() {
+  persistNewChatDraft();
+  if (history.state?.pocket === navigationSession && history.state.view === 'new-session') history.back();
+  else returnToList();
+}
+async function loadNewSessionOptions() {
+  try {
+    const options = await api('/api/new-session/options');
+    const paths = [...new Set((Array.isArray(options.directories) ? options.directories : []).filter(path => typeof path === 'string' && path.startsWith('/')))].slice(0, 100);
+    newSessionParent = options.defaultParent ?? paths[0] ?? '';
+    $('new-session-directories').replaceChildren(...paths.map(path => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'project-choice';
+      button.append(icon('folder'));
+      const name = document.createElement('strong'); name.textContent = path.split('/').filter(Boolean).at(-1) || path;
+      const location = document.createElement('span'); location.textContent = path;
+      const info = document.createElement('span'); info.append(name, location); button.append(info, icon('chevron')); button.onclick = () => chooseNewSession(path);
+      return button;
+    }));
+    $('new-session-empty').hidden = paths.length > 0;
+    $('new-session-empty').textContent = 'No recent folders. Choose another folder or create a project.';
+    if (!pendingCreation && !newSessionEditor && !newSessionChosen && !$('new-session-directory').value) $('new-session-directory').value = newSessionParent;
+  } catch (err) { $('new-session-empty').hidden = false; $('new-session-empty').textContent = 'Recent projects unavailable. You can enter a folder path instead.'; }
+}
+function captureNewSessionForm() {
+  return { directory: $('new-session-directory').value, newDirectoryName: newSessionKind() === 'new' ? $('new-session-folder').value : undefined, text: $('new-session-text').value };
+}
+function seedCreatedSession(record) {
+  const showCreated = ['new-session', 'loading'].includes($('app').dataset.view);
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(record?.thread?.id ?? '') || typeof record.thread.cwd !== 'string' || typeof record.thread.status?.type !== 'string') throw new Error('Invalid new chat response');
+  const thread = { ...record.thread, loaded: true }, submission = record.submission;
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submission?.id ?? '') || submission.threadId !== thread.id || !['sending', 'accepted', 'completed', 'failed', 'outcome-unknown'].includes(submission.state)) throw new Error('Invalid first-message outcome');
+  submissions.set(thread.id, { ...submission, text: pendingCreation?.text ?? '' });
+  const unresolved = !submission.turnId;
+  if (unresolved) {
+    const text = pendingCreation?.text ?? submission?.text ?? '';
+    drafts.set(thread.id, text);
+    const current = submissions.get(thread.id) ?? { id: submission?.id, threadId: thread.id, text, state: 'outcome-unknown' };
+    current.text = text; current.state = submission.state === 'failed' ? 'failed' : 'outcome-unknown'; current.message = submission?.message ?? 'First message outcome unknown. Check send status; do not resend.';
+    submissions.set(thread.id, current); persistDrafts();
+  }
+  pendingCreation = undefined; persistPendingCreation();
+  threads = threads.filter(entry => entry.id !== thread.id); mergeThreads([thread]);
+  $('new-session').hidden = true;
+  newSessionChosen = false; newSessionMode = 'existing'; newSessionEditor = false; newSessionChoosing = true;
+  try { localStorage.removeItem(newChatDraftKey); } catch {}
+  $('new-session-form').reset();
+  if (showCreated) { history.replaceState(listNavigation(), ''); select(thread, true); }
+  else { renderThreads(); $('announcement').textContent = 'New chat is ready in your conversations.'; }
+  void loadPicker({ reset: true });
+}
+async function reconcileNewSession() {
+  if (!authenticated || !pendingCreation) return;
+  const current = creationEpoch, requestId = pendingCreation.requestId;
+  try {
+    const response = await fetch(`/api/new-session/${encodeURIComponent(requestId)}`, { cache: 'no-store' });
+    const result = await response.json();
+    if (!authenticated || current !== creationEpoch || pendingCreation?.requestId !== requestId) return;
+    if (response.status === 401) { showPairing(); return; }
+    if (response.status === 404) { pendingCreation.state = 'outcome-unknown'; pendingCreation.message = 'Creation status is unavailable. Check Codex CLI; this chat will not be started again automatically.'; persistPendingCreation(); updateNewSessionForm(); return; }
+    if (!response.ok) throw new Error(result.message ?? 'Could not check new chat status');
+    if (result.id !== requestId || !['creating', 'created', 'outcome-unknown', 'failed'].includes(result.state)) throw new Error('Invalid creation status');
+    pendingCreation = { ...pendingCreation, ...result };
+    if (result.state === 'created') seedCreatedSession(result); else if (result.state === 'failed') persistPendingCreation(); else persistPendingCreation();
+    updateNewSessionForm();
+  } catch (err) { if (!authenticated || current !== creationEpoch || pendingCreation?.requestId !== requestId) return; pendingCreation.state = 'outcome-unknown'; pendingCreation.message = `Could not verify new chat status. Check Codex CLI before retrying. ${err.message ?? ''}`.trim(); persistPendingCreation(); updateNewSessionForm(); }
+}
+async function startNewSession(event) {
+  event.preventDefault();
+  if ($('new-session-start').disabled) return;
+  const fields = captureNewSessionForm();
+  if (!/^\//.test(fields.directory) || !fields.text.trim() || (newSessionKind() === 'new' && !fields.newDirectoryName)) { $('new-session-status').textContent = 'Choose an absolute existing directory and enter a first message.'; return; }
+  const requestId = crypto.randomUUID(), current = creationEpoch;
+  pendingCreation = { requestId, ...fields, state: 'creating', message: 'Creating chat…' }; persistPendingCreation(); updateNewSessionForm();
+  try {
+    const response = await fetch('/api/new-session', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pocket-Request': '1' }, body: JSON.stringify({ clientRequestId: requestId, ...fields }) });
+    const result = await response.json();
+    if (!authenticated || current !== creationEpoch || pendingCreation?.requestId !== requestId) return;
+    if (response.status === 401) { showPairing(); return; }
+    if (!response.ok) {
+      if ([400, 403, 409, 413, 429].includes(response.status)) { pendingCreation.state = 'failed'; pendingCreation.message = result.message ?? 'Check the new chat fields and try again.'; persistPendingCreation(); updateNewSessionForm(); return; }
+      if (result?.id === requestId && result?.state) { pendingCreation = { ...pendingCreation, ...result }; persistPendingCreation(); updateNewSessionForm(); return; }
+      throw new Error(result.message ?? 'Could not start chat');
+    }
+    if (result.id !== requestId || !['creating', 'created', 'outcome-unknown', 'failed'].includes(result.state)) throw new Error('Invalid new chat response');
+    pendingCreation = { ...pendingCreation, ...result };
+    if (result.state === 'created') seedCreatedSession(result); else { persistPendingCreation(); updateNewSessionForm(); }
+  } catch (err) { if (!authenticated || current !== creationEpoch || pendingCreation?.requestId !== requestId) return; pendingCreation.state = 'outcome-unknown'; pendingCreation.message = 'Creation outcome unknown. Check status or Codex CLI; do not retry automatically.'; persistPendingCreation(); updateNewSessionForm(); }
 }
 function mergeThreads(entries, replace = false) {
   observeCompletions(entries);
@@ -435,6 +583,7 @@ function select(thread, navigate = false) {
   void checkSubmission(thread.id);
 }
 function updateComposer() {
+  if ($('app').dataset.view === 'new-session') updateNewSessionForm();
   const pending = selected && submissions.get(selected.id);
   const questionReply = selected?.question && !selected.blocked && (selected.status.type === 'idle' || (selected.status.type === 'active' && selected.latestTurn?.id === selected.question.turnId));
   const activeTurnId = selected?.status.type === 'active' && selected.latestTurn?.status === 'inProgress' ? selected.latestTurn.id : null;
@@ -604,6 +753,20 @@ function returnToList() {
   clearTimeout(timer); timer = undefined;
   $('conversation').hidden = true; $('picker').hidden = false; setView('list'); updateComposer(); void list();
 }
+async function openNewSession(navigate = true) {
+  if (!authenticated) return;
+  $('error').textContent = ''; source?.close(); ++epoch; ++openIntent; selected = undefined; ready = false;
+  clearTimeout(timer); timer = undefined;
+  if (navigate && history.state?.view !== 'new-session') history.pushState({ pocket: navigationSession, view: 'new-session' }, '');
+  if (pendingCreation) {
+    $('new-session-directory').value = pendingCreation.directory ?? ''; $('new-session-folder').value = pendingCreation.newDirectoryName ?? ''; $('new-session-text').value = pendingCreation.text ?? '';
+    newSessionMode = pendingCreation.newDirectoryName ? 'new' : 'existing'; newSessionChosen = true; newSessionEditor = false; newSessionChoosing = false;
+  }
+  setView('new-session'); $('conversation').hidden = true; $('picker').hidden = false; renderThreads(); updateNewSessionForm();
+  if (navigate) $('new-session-title').focus({ preventScroll: true });
+  if (!pendingCreation) await loadNewSessionOptions();
+  if ($('app').dataset.view === 'new-session') updateNewSessionForm();
+}
 $('back').onclick = () => {
   if (backPending) return;
   if (history.state?.pocket === navigationSession && history.state.view === 'conversation') { backPending = true; history.back(); }
@@ -613,12 +776,44 @@ window.addEventListener('popstate', event => {
   backPending = false;
   if (!authenticated) { history.replaceState(listNavigation(), ''); showPairing(); return; }
   const state = event.state;
+  if (state?.pocket === navigationSession && state.view === 'new-session') { void openNewSession(false); return; }
   if (state?.pocket === navigationSession && state.view === 'conversation') {
     const thread = navigationThreads.get(state.threadId);
     if (thread) { ++openIntent; select(thread); return; }
   }
   history.replaceState(listNavigation(), ''); returnToList();
 });
+$('new-chat').onclick = () => { void openNewSession(); };
+$('new-session-form').onsubmit = event => { void startNewSession(event); };
+$('new-session-create-folder').onclick = () => chooseNewSession(newSessionParent, 'new', true);
+$('new-session-other-folder').onclick = () => chooseNewSession('', 'existing', true);
+$('new-session-change').onclick = () => {
+  if (pendingCreation && pendingCreation.state !== 'failed') return;
+  if (pendingCreation) { pendingCreation = undefined; persistPendingCreation(); }
+  newSessionChoosing = !newSessionChoosing; newSessionEditor = false; updateNewSessionForm();
+  if (newSessionChoosing) ($('new-session-directories').querySelector('button') ?? $('new-session-create-folder')).focus({ preventScroll: true });
+};
+$('new-session-folder-back').onclick = () => { newSessionEditor = false; newSessionChoosing = true; updateNewSessionForm(); };
+$('new-session-use-folder').onclick = () => {
+  const path = $('new-session-directory').value, name = $('new-session-folder').value;
+  if (!path.startsWith('/') || (newSessionMode === 'new' && (!name.trim() || name === '.' || name === '..' || /[\/\\]/.test(name)))) {
+    $('new-session-folder-error').textContent = 'Enter an absolute folder path' + (newSessionMode === 'new' ? ' and a folder name without slashes.' : '.'); return;
+  }
+  newSessionChosen = true; newSessionEditor = false; newSessionChoosing = false; updateNewSessionForm(); persistNewChatDraft(); $('new-session-change').focus({ preventScroll: true });
+};
+for (const id of ['new-session-directory', 'new-session-folder', 'new-session-text']) $(id).oninput = () => { updateNewSessionForm(); persistNewChatDraft(); };
+$('new-session-close').onclick = closeNewSession;
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || $('app').dataset.view !== 'new-session' || $('attachment-preview').open) return;
+  event.preventDefault();
+  if (newSessionEditor || (newSessionChoosing && newSessionChosen)) { newSessionEditor = false; newSessionChoosing = !newSessionChosen; updateNewSessionForm(); $('new-session-change').focus({ preventScroll: true }); } else closeNewSession();
+});
+restoreNewChatDraft();
+$('new-session-check').onclick = () => { void reconcileNewSession(); };
+$('new-session-retry').onclick = () => {
+  pendingCreation = undefined; persistPendingCreation();
+  updateNewSessionForm(); $('new-session-form').requestSubmit($('new-session-start'));
+};
 $('scope-loaded').onclick = () => setPickerScope('loaded'); $('scope-all').onclick = () => setPickerScope('all'); $('filter').oninput = event => setPickerQuery(event.target.value); $('more-threads').onclick = () => { if (!pickerLoading) void loadPicker({ append: true }); }; $('older').onclick = () => { historyFailed = false; void hydrate(true); };
 $('new-content').onclick = () => { followLatest = true; scrollToLatest(); settleBottom(); };
 document.addEventListener('visibilitychange', () => { if (document.hidden) { ++epoch; source?.close(); ready = false; updateComposer(); } else void bootstrap(); });
@@ -647,6 +842,10 @@ setInterval(async () => {
 
 
 function showPairing() {
+  ++creationEpoch;
+  $('new-session').hidden = true;
+  $('new-session-form').reset(); newSessionChosen = false; newSessionMode = 'existing'; newSessionEditor = false; newSessionChoosing = true;
+  try { localStorage.removeItem(newChatDraftKey); } catch {}
   if ($('attachment-preview').open) $('attachment-preview').close();
   readReceipts.clear(); try { localStorage.removeItem(readReceiptKey); } catch {}
   navigationThreads.clear(); backPending = false; history.replaceState(listNavigation(), '');
@@ -656,6 +855,7 @@ function showPairing() {
   try { sessionStorage.removeItem(draftStorageKey); } catch {}
   clearTimeout(pickerTimer); ++pickerGeneration; ++openIntent; pickerLoading = false; $('filter').value = '';
   attachments.clear(); canAttachImages = false; canBrowseHistory = false; pickerScope = 'loaded'; pickerCursor = null; pickerQuery = ''; opening.clear(); preparationEpoch++;
+  pendingCreation = undefined; persistPendingCreation();
   $('draft').value = ''; $('threads').replaceChildren(); $('transcript').replaceChildren(); $('scope-all').hidden = true; $('scope-loaded').setAttribute('aria-pressed', 'true'); $('scope-all').setAttribute('aria-pressed', 'false');
   $('attachments').replaceChildren(); $('attachments').hidden = true;
   $('title').textContent = ''; $('project').textContent = ''; $('submission-status').textContent = '';
@@ -678,7 +878,10 @@ async function bootstrap() {
     }
     await status();
     if (!authenticated) return;
-    if (selected) select(selected); else { $('picker').hidden = false; setView('list'); await list(); }
+    await reconcileNewSession();
+    if (!authenticated) return;
+    if ($('app').dataset.view === 'new-session') { await openNewSession(false); await list(); }
+    else if (selected) select(selected); else { $('picker').hidden = false; setView('list'); await list(); }
   } catch (err) { error(err); }
 }
 $('pair-form').onsubmit = async event => {

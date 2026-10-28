@@ -15,6 +15,11 @@ experimental protocol compatibility is not a promise for every daemon version.
 - Loaded conversation picker and metadata-only saved conversation browsing with
   search and pagination. Opening a saved conversation is an explicit ID-only
   resume that does not override policy, model, instructions, or working directory.
+- New conversations use an explicit existing working directory or a newly created
+  single child folder and preserve exact first-message text. The daemon supplies
+  normal directory-specific settings. Creation IDs and retained outcomes prevent
+  duplicate starts; ambiguous creation is never retried automatically. Known
+  threads use the existing first-message submission protection.
 - Bounded paginated history and SSE notifications that trigger authoritative
   history reads. Turn/item IDs reconcile partial and completed representations.
 - Exact text and image submission, client-ID deduplication, serialized writes,

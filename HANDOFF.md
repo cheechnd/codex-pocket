@@ -10,7 +10,8 @@ existing Codex shared daemon. Read AGENTS.md, README.md, SPEC.md, and
   bundled with esbuild. Node 22.13+.
 - Reuse the existing daemon's login. Never launch a hidden app-server, read/copy
   OAuth credentials, broaden thread policy, or change the user's daemon settings.
-- Loaded and saved browsing, explicit saved-thread open, bounded history, SSE,
+- New chat in existing/new working directories, loaded and saved browsing,
+  explicit saved-thread open, bounded history, SSE,
   image input, Markdown, async question replies, and active follow-ups are present.
 - A submitted text/image/turn target is captured before navigation. Unknown writes
   reconcile by client ID; never blindly resend or fall back from steer to start.

@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { access, realpath, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { homedir } from 'node:os';
 import { Transport } from './transport.js';
 import { PocketError, type Thread, type Page, type Notice, type Submission, type SavedPage, type QuestionTarget, type Entry } from './types.js';
 
@@ -7,6 +10,7 @@ export const sendLimitation = 'Use one device at a time. Use Send for idle messa
 /** Shared loaded-thread reader; HTTP and browser independent. */
 export class DaemonAdapter extends EventEmitter {
   private attached = new Map<string, Promise<void>>();
+  private creatingThreads = 0;
   private leases = new Map<string, number>();
   private blocked = new Map<string, Set<string | number>>();
   private sequence = 0;
@@ -144,7 +148,57 @@ export class DaemonAdapter extends EventEmitter {
   }
   async attach(id: string) {
     await this.assertLoaded(id);
+    // thread/start owns the newly-created thread and registers it here before
+    // the initial message is sent. The loaded guard above remains mandatory;
+    // this avoids a second thread/resume for the daemon-owned subscription.
+    if (this.attached.has(id)) { await this.attached.get(id); return; }
     await this.attachShared(id);
+  }
+
+  async newSessionOptions(): Promise<{ directories: string[]; defaultParent: string }> {
+    const loaded = await this.list();
+    const directories: string[] = [];
+    for (const thread of loaded) {
+      if (!thread.cwd.startsWith('/') || directories.includes(thread.cwd)) continue;
+      try {
+        const candidate = await realpath(thread.cwd);
+        const info = await stat(candidate);
+        await access(candidate, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK);
+        if (info.isDirectory() && !directories.includes(candidate)) directories.push(candidate);
+      } catch { /* Stale or inaccessible loaded cwd is not a creation option. */ }
+      if (directories.length >= 20) break;
+    }
+    const home = homedir();
+    const dev = `${home}/dev`;
+    let defaultParent = home;
+    try { if ((await stat(dev)).isDirectory()) defaultParent = await realpath(dev); } catch { /* home is the fallback */ }
+    return { directories, defaultParent };
+  }
+
+  async createSession(cwd: string, text: string, clientSubmissionId: string): Promise<{ thread: Thread; submission: Submission }> {
+    if (this.attached.size + this.creatingThreads >= 32) throw new PocketError('capacity', 'Subscription limit reached; restart this local app to release owned subscriptions');
+    this.creatingThreads++;
+    let thread: Thread;
+    try {
+      const result: any = await this.transport.request('thread/start', { cwd }, true);
+      try {
+        thread = this.sanitize(result?.thread ?? result);
+        if (thread.cwd !== cwd) throw new Error('Daemon returned a different working directory for the new conversation');
+      } catch (error) {
+        throw new PocketError('outcome-unknown', `New conversation creation outcome is unknown: ${error instanceof Error ? error.message : 'invalid daemon response'}`);
+      }
+      // thread/start already owns this subscription; don't resume before the
+      // first message persists. Keep its known identity if that message fails.
+      this.attached.set(thread.id, Promise.resolve());
+    } finally { this.creatingThreads--; }
+    try {
+      const submission = await this.send(thread.id, text, clientSubmissionId);
+      return { thread, submission };
+    } catch (error) {
+      // The thread identity is authoritative even when local preflight rejects
+      // the first message. Keep it attached and expose the failed submission.
+      return { thread, submission: { id: clientSubmissionId, threadId: thread.id, state: 'failed', message: error instanceof PocketError ? error.message : 'Initial submission failed' } };
+    }
   }
   async acquire(id: string) {
     await this.attach(id); this.leases.set(id, (this.leases.get(id) ?? 0) + 1);

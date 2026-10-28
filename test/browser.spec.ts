@@ -135,23 +135,33 @@ test('blank loaded sessions are omitted and a real unnamed conversation uses its
   await expect(page.locator('#title')).toHaveText('Real unnamed conversation');
 });
 
-test('Chrome reads the public install manifest before pairing', async ({ page }) => {
-  await page.goto('/');
-  const session = await page.context().newCDPSession(page);
-  await expect.poll(async () => {
+test('Chrome reads the public install manifest before pairing', async ({ playwright }) => {
+  // Chromium rejects installation in incognito contexts. Use a fresh normal
+  // profile to check the app's installability rather than the test context.
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const profile = await mkdtemp(join(tmpdir(), 'pocket-install-manifest-'));
+  const context = await playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, baseURL: 'http://127.0.0.1:44318' });
+  try {
+    const page = context.pages()[0];
+    await page.goto('http://127.0.0.1:44318/');
+    const session = await page.context().newCDPSession(page);
+    await expect.poll(async () => {
+      const manifest = await session.send('Page.getAppManifest');
+      return manifest.data ? JSON.parse(manifest.data).name : null;
+    }).toBe('Codex Pocket');
     const manifest = await session.send('Page.getAppManifest');
-    return manifest.data ? JSON.parse(manifest.data).name : null;
-  }).toBe('Codex Pocket');
-  const manifest = await session.send('Page.getAppManifest');
-  expect(manifest.errors).toEqual([]);
-  const { installabilityErrors } = await session.send('Page.getInstallabilityErrors');
-  expect(installabilityErrors).toEqual([]);
-  for (const size of [192, 512]) {
-    const response = await page.request.get(`/icon-${size}.png`);
-    expect(response.ok()).toBe(true);
-    expect(response.headers()['content-type']).toBe('image/png');
-  }
-  expect((await page.request.get('/api/threads')).status()).toBe(401);
+    expect(manifest.errors).toEqual([]);
+    const { installabilityErrors } = await session.send('Page.getInstallabilityErrors');
+    expect(installabilityErrors).toEqual([]);
+    for (const size of [192, 512]) {
+      const response = await page.request.get(`/icon-${size}.png`);
+      expect(response.ok()).toBe(true);
+      expect(response.headers()['content-type']).toBe('image/png');
+    }
+    expect((await page.request.get('/api/threads')).status()).toBe(401);
+  } finally { await context.close(); await rm(profile, { recursive: true, force: true }); }
 });
 
 test('closing and reopening the app preserves text and uncertain-send protection until unpair', async ({ playwright }) => {

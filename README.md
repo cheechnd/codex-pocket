@@ -62,8 +62,22 @@ Switch to **All** to browse older saved conversations. Search matches saved titl
 includes non-archived interactive sessions across providers. Browsing never loads
 or starts a thread. Tapping an unloaded row explicitly resumes that same thread
 by ID, preserving its saved configuration, then opens its latest history. Nothing
-is sent automatically. Archived sessions and new conversation creation remain
-outside the current UI. Loaded-view search also matches project paths.
+is sent automatically. Archived sessions remain outside the current UI.
+Loaded-view search also matches project paths.
+
+Use **New chat** to open a fresh conversation draft. Choose a recent project,
+**New folder**, or **Use another folder** for an existing absolute path.
+Folder setup selects a destination; nothing is created until you send the first
+message with the arrow. Tap the project above the composer to change it without
+losing your message. New-chat text drafts survive refreshes on this device. Pocket uses the daemon's normal Codex
+configuration for that folder; it does not copy another conversation's settings
+or automatically handle approvals. It does not initialize Git.
+
+Pending creation requests survive refreshes in this browser and can be checked
+without resubmitting. If creation has an unknown outcome, check Codex CLI before
+starting another session; Pocket never guesses by directory or auto-retries.
+A created directory is kept if session creation fails. Once the session is known,
+the usual draft and unknown-send protection applies to its initial message.
 
 Avatar dots show blue for working, orange for needs-CLI action, and green for new
 finished work not yet viewed. Green clears when you view the latest messages;

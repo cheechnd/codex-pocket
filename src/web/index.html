@@ -29,7 +29,7 @@
     </section>
     <section id="picker" hidden aria-label="Conversations">
       <h1 class="sr-only">Conversations</h1>
-      <div id="scope" class="scope" role="group" aria-label="Conversation scope"><button id="scope-loaded" type="button" aria-pressed="true">Loaded</button><button id="scope-all" type="button" aria-pressed="false" hidden>All</button></div>
+      <div class="picker-toolbar"><div id="scope" class="scope" role="group" aria-label="Conversation scope"><button id="scope-loaded" type="button" aria-pressed="true">Loaded</button><button id="scope-all" type="button" aria-pressed="false" hidden>All</button></div><button id="new-chat" class="icon-button" type="button" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
       <div class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><label class="sr-only" for="filter">Filter by title or project</label><input id="filter" type="search" placeholder="Search" autocomplete="off"></div>
       <div id="threads" class="thread-list"></div>
       <button id="more-threads" type="button" hidden>Load more</button>
@@ -52,6 +52,35 @@
         <div class="input-bar"><label class="sr-only" for="draft">Message</label><textarea id="draft" autocomplete="off" spellcheck="true" rows="1" placeholder="Message" aria-describedby="submission-status"></textarea><button id="attach" class="attach-button" type="button" aria-label="Attach images" title="Attach images" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 18.4a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button><input id="image-input" type="file" accept="image/*" multiple hidden><button id="send" aria-label="Send" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div>
       </div>
     </section>
+    <section id="new-session" class="new-chat-page" aria-labelledby="new-session-title" hidden>
+      <header class="new-chat-header"><button id="new-session-close" type="button" aria-label="Back to conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><h2 id="new-session-title" tabindex="-1">New chat</h2></header>
+      <form id="new-session-form">
+        <div class="new-chat-content">
+          <div id="new-session-choose">
+            <h3>Choose a project</h3><p class="new-chat-caption">Recent folders on your computer</p>
+            <div id="new-session-directories" class="new-session-projects"></div>
+            <p id="new-session-empty" class="new-chat-caption" role="status">Loading projects…</p>
+            <div class="new-project-actions"><button id="new-session-create-folder" type="button">＋ New folder</button><button id="new-session-other-folder" type="button">Use another folder…</button></div>
+          </div>
+          <div id="new-session-folder-editor" hidden>
+            <button id="new-session-folder-back" class="text-action" type="button">‹ Projects</button>
+            <h3 id="new-session-editor-title" tabindex="-1">New folder</h3>
+            <div id="new-session-folder-wrap"><label for="new-session-folder">Folder name</label><input id="new-session-folder" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="my-project"></div>
+            <label id="new-session-directory-label" for="new-session-directory">Inside</label><input id="new-session-directory" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="/home/you/dev">
+            <p id="new-session-destination" class="new-chat-caption"></p>
+            <p id="new-session-folder-error" class="new-chat-caption" role="alert"></p>
+            <button id="new-session-use-folder" class="use-folder" type="button">Use folder</button>
+          </div>
+          <div id="new-session-ready" hidden><span class="new-chat-mark" aria-hidden="true">⌘</span><h3>What should we work on?</h3><p class="new-chat-caption">Your project. A fresh conversation.</p></div>
+        </div>
+        <div class="new-chat-composer">
+          <button id="new-session-change" class="project-context" type="button" aria-label="Choose project" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5h7l2 2h9v13H3Z"/></svg><span><strong id="new-session-project-name">Choose project</strong><small id="new-session-project-path"></small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+          <p id="new-session-status" class="new-session-status" role="status"></p>
+          <div class="new-chat-input"><label class="sr-only" for="new-session-text">Message for new chat</label><textarea id="new-session-text" rows="3" placeholder="What should Codex work on?"></textarea><button id="new-session-start" type="submit" aria-label="Start chat" title="Start chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div>
+          <div class="new-chat-recovery"><button id="new-session-check" class="text-action" type="button" hidden>Check status</button><button id="new-session-retry" class="text-action" type="button" hidden>Try again</button></div>
+        </div>
+      </form>
+    </section>
     <span id="announcement" class="sr-only" role="status" aria-live="polite"></span><p id="error" class="error" role="alert"></p>
   </main>
 </div>
@@ -59,5 +88,6 @@
   <header><div><h2 id="attachment-preview-title">Attachment preview</h2><p id="attachment-preview-name"></p></div><button id="attachment-preview-close" type="button" autofocus>Close</button></header>
   <div class="attachment-preview-image"><img id="attachment-preview-image" alt=""></div>
 </dialog>
+
 </body>
 </html>

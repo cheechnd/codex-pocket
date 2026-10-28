@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { DaemonAdapter } from '../daemon/adapter.js';
 import { AttachmentStore } from './attachments.js';
 import { AccessControl } from './access.js';
+import { NewSessionManager } from './new-session.js';
 import { PocketError } from '../daemon/types.js';
 
 export function createApp(adapter: DaemonAdapter, port = 4317, options: { access: AccessControl; attachments?: AttachmentStore; origin?: string; webRoot?: URL }) {
@@ -21,6 +22,7 @@ export function createApp(adapter: DaemonAdapter, port = 4317, options: { access
   const address = new URL(origin);
   if (address.origin !== origin || (address.protocol !== 'https:' && origin !== `http://127.0.0.1:${port}`) || address.username || address.password) throw new Error('Configure an exact HTTPS PUBLIC_ORIGIN, or use numeric loopback HTTP');
   const { access } = options;
+  const newSessions = new NewSessionManager(adapter);
   const readJSON = async (req: import('node:http').IncomingMessage, limit = 70 * 1024) => {
     const chunks: Buffer[] = []; let size = 0;
     for await (const chunk of req) { size += chunk.length; if (size > limit) throw new PocketError('size', 'Request too large'); chunks.push(chunk); }
@@ -50,6 +52,10 @@ export function createApp(adapter: DaemonAdapter, port = 4317, options: { access
       if (url.pathname.startsWith('/api/') && !sessionId) return json(401, { error: 'unauthorized', message: 'Pair this device to access Codex Pocket' });
       if (req.method === 'POST' && url.pathname === '/api/logout') { await access.logout(req, res, origin); return json(200, { authenticated: false }); }
       if (req.method === 'GET' && url.pathname === '/api/status') return json(200, { ...adapter.status(), canAttachImages: !!options.attachments });
+      if (req.method === 'GET' && url.pathname === '/api/new-session/options') return json(200, await newSessions.options());
+      if (req.method === 'POST' && url.pathname === '/api/new-session') return json(200, await newSessions.create(await readJSON(req, 80 * 1024)));
+      const newSession = /^\/api\/new-session\/([0-9a-f-]{36})$/i.exec(url.pathname);
+      if (req.method === 'GET' && newSession) return json(200, await newSessions.get(newSession[1]));
       if (req.method === 'GET' && url.pathname === '/api/threads') return json(200, await adapter.list());
       if (req.method === 'GET' && url.pathname === '/api/saved-threads') {
         const cursor = url.searchParams.get('cursor') ?? undefined;
