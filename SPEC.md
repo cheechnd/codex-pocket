@@ -100,7 +100,7 @@ approval is introduced. The existing single-device assumption remains.
 ### Screenshot attachments (user-requested follow-on)
 
 Support pasting images and choosing screenshots/photos in the composer, including
-image-only messages. Keep image previews/removal in browser memory per thread;
+image-only messages. Keep image previews/removal and saved drafts on the device per thread;
 never upload or send until explicit Send. Preserve exact accompanying text and
 existing unknown-outcome reconciliation. Limit four images, 8 MiB each and 20 MiB
 total after preparation; normalize to PNG/JPEG, at most 4096 pixels per edge.
@@ -165,12 +165,17 @@ computer; never start or repair it implicitly.
 - Sticky multiline composer respects phone keyboard and safe-area insets.
   Explicit Send button; Enter inserts a newline. Disable accidental double taps.
 - Keep text drafts per conversation in localStorage, restoring them
-  after refresh or closing/reopening the app and clearing them on confirmed send or unpair. Keep image drafts
-  in memory only. Confirmation clears only the submitted text, preserving newer
-  edits. Retain uncertain submission IDs with captured text across refreshes for
+  after refresh or closing/reopening the app and clearing them on confirmed send or unpair.
+  Save prepared screenshot drafts per conversation in IndexedDB, restoring previews
+  without uploading or sending. Removal and unpair delete saved images; confirmed
+  acceptance clears only captured image IDs and matching text, preserving newer
+  edits. Report storage failure and retain an in-memory fallback. Retain uncertain
+  submission IDs with captured text and image IDs across refreshes for
   reconciliation; never auto-resend, including when the server ledger is missing.
   Switching threads must not send a draft to a different target. Do not persist
-  transcripts or image bytes in browser storage.
+  transcripts in browser storage. Keep accepted-image cleanup linked to its
+  submission ID until durable removal completes so an interrupted reload cannot
+  offer already-sent images as a fresh draft.
 - Statuses distinguish connecting, connected, reconnecting, offline, idle,
   working, blocked, sending, accepted, failed, and outcome-unknown.
 - On unsupported approval/question: show "Needs action in Codex CLI" with any

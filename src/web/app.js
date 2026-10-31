@@ -1,4 +1,5 @@
 import { renderMarkdown } from './markdown.js';
+import { loadAttachmentDrafts, saveAttachmentDrafts, clearAttachmentDrafts } from './attachment-drafts.js';
 const $ = id => document.getElementById(id);
 let selected, source, epoch = 0, cursor, busy = false, dirty = false, timer, threads = [];
 let pickerScope = 'loaded', pickerCursor = null, pickerLoading = false, pickerGeneration = 0, pickerTimer, pickerQuery = '';
@@ -6,7 +7,7 @@ let historyLoading = false, historyFailed = false, historyScrollTimer, historySc
 const opening = new Set();
 let openIntent = 0;
 const drafts = new Map(), attachments = new Map(), items = new Map(), submissions = new Map();
-// Text only, kept on this device across app sessions. Pending IDs guard against
+// Text and pending-send metadata, kept on this device across app sessions. Pending IDs guard against
 // duplicate sends even when the server no longer retains its outcome ledger.
 const draftStorageKey = 'pocket-drafts-v1';
 const newSessionStorageKey = 'pocket-new-session-v1';
@@ -37,14 +38,14 @@ try {
     }
     for (const record of Array.isArray(stored.pending) ? stored.pending : []) {
       if (record && validId(record.threadId) && validId(record.id) && typeof record.text === 'string') {
-        submissions.set(record.threadId, { id: record.id, threadId: record.threadId, text: record.text, state: 'outcome-unknown', message: 'Outcome unknown. Check send status; do not resend.' });
+        submissions.set(record.threadId, { id: record.id, threadId: record.threadId, text: record.text, imageIds: Array.isArray(record.imageIds) ? record.imageIds.filter(id => typeof id === 'string') : [], state: 'outcome-unknown', message: 'Outcome unknown. Check send status; do not resend.' });
       }
     }
   }
 } catch { /* Unavailable or malformed storage falls back to in-memory drafts. */ }
 function persistDrafts() {
-  const pending = [...submissions.values()].filter(record => !record.turnId && ['sending', 'accepted', 'outcome-unknown'].includes(record.state) && typeof record.text === 'string')
-    .map(({ id, threadId, text }) => ({ id, threadId, text }));
+  const pending = [...submissions.values()].filter(record => ((!record.turnId && ['sending', 'accepted', 'outcome-unknown'].includes(record.state)) || record.imageCleanup) && typeof record.text === 'string')
+    .map(({ id, threadId, text, imageIds }) => ({ id, threadId, text, imageIds }));
   try {
     const textDrafts = [...drafts].filter(([, text]) => text.length);
     if (textDrafts.length || pending.length) localStorage.setItem(draftStorageKey, JSON.stringify({ version: 1, drafts: textDrafts, pending }));
@@ -55,6 +56,42 @@ function setDraft(threadId, text) { drafts.set(threadId, text); persistDrafts();
 let connected = false, ready = false, authenticated = false;
 let canAttachImages = false, canBrowseHistory = false, preparationCount = 0, preparationEpoch = 0;
 const MAX_IMAGES = 4, MAX_SOURCE_BYTES = 20 * 1024 * 1024, MAX_DECODED_BYTES = 8 * 1024 * 1024, MAX_TOTAL_DECODED_BYTES = 20 * 1024 * 1024, MAX_EDGE = 4096;
+let attachmentRestore;
+const imagePurgeKey = 'pocket-attachment-purge';
+function purgeSavedImages() {
+  // Keep a tombstone if the page closes before deletion commits. A subsequent
+  // pairing must finish the purge before restoring any old device-local images.
+  try { localStorage.setItem(imagePurgeKey, '1'); } catch {}
+  return clearAttachmentDrafts().then(() => { try { localStorage.removeItem(imagePurgeKey); } catch {} });
+}
+function saveImages(threadId) {
+  const images = (attachments.get(threadId) ?? []).map(({ id, name, dataUrl, decoded }) => ({ id, name, dataUrl, decoded }));
+  return saveAttachmentDrafts(threadId, images);
+}
+function imageStorageError() { error('Screenshot drafts could not be saved on this device. Keep Pocket open to avoid losing them.'); }
+function restoreImages() {
+  if (attachmentRestore) return attachmentRestore;
+  const run = preparationEpoch;
+  attachmentRestore = (async () => {
+    let purge = false; try { purge = localStorage.getItem(imagePurgeKey) === '1'; } catch {}
+    if (purge) await purgeSavedImages();
+    return loadAttachmentDrafts();
+  })().then(rows => {
+    if (!authenticated || run !== preparationEpoch) return;
+    for (const row of rows.slice(0, 32)) {
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(row?.threadId ?? '') || !Array.isArray(row.images)) continue;
+      let total = 0;
+      const images = row.images.slice(0, MAX_IMAGES).filter(image => {
+        if (typeof image?.id !== 'string' || typeof image.name !== 'string' || typeof image.dataUrl !== 'string' || image.dataUrl.length > MAX_DECODED_BYTES * 1.34 + 100 || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(image.dataUrl)) return false;
+        image.decoded = Math.floor((image.dataUrl.length - image.dataUrl.indexOf(',') - 1) * 3 / 4);
+        total += image.decoded;
+        return image.decoded <= MAX_DECODED_BYTES && total <= MAX_TOTAL_DECODED_BYTES;
+      });
+      if (images.length) attachments.set(row.threadId, images);
+    }
+  }).catch(() => { if (authenticated && run === preparationEpoch) imageStorageError(); });
+  return attachmentRestore;
+}
 const checking = new Set();
 let initialTranscript = true, followLatest = true, bottomFrame, previousScrollTop = 0, viewportFollowLock = false, readerAnchor;
 const scroller = $('message-scroll');
@@ -635,7 +672,7 @@ function renderAttachments() {
     const preview = document.createElement('img'); preview.src = image.dataUrl; preview.alt = image.name; preview.loading = 'lazy'; open.append(preview);
     open.onclick = event => openAttachmentPreview(image, event.detail > 0); figure.append(open);
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'attachment-remove'; remove.setAttribute('aria-label', `Remove image ${image.name}`); remove.title = `Remove ${image.name}`; remove.textContent = '×';
-    remove.onclick = () => { const next = (attachments.get(selected.id) ?? []).filter(entry => entry.id !== image.id); attachments.set(selected.id, next); renderAttachments(); updateComposer(); };
+    remove.onclick = () => { const next = (attachments.get(selected.id) ?? []).filter(entry => entry.id !== image.id); const threadId = selected.id; if (next.length) attachments.set(threadId, next); else attachments.delete(threadId); void saveImages(threadId).catch(imageStorageError); renderAttachments(); updateComposer(); };
     figure.append(remove); tray.append(figure);
   }
   tray.hidden = !current.length;
@@ -681,6 +718,7 @@ async function addImageFiles(fileList) {
     if (run !== preparationEpoch || !authenticated) return;
     if (current.reduce((sum, image) => sum + image.decoded, 0) + prepared.reduce((sum, image) => sum + image.decoded, 0) > MAX_TOTAL_DECODED_BYTES) throw new Error('Attached images exceed 20 MiB.');
     attachments.set(threadId, [...(attachments.get(threadId) ?? []), ...prepared]); renderAttachments(); updateComposer();
+    try { await saveImages(threadId); } catch { if (run === preparationEpoch && authenticated) imageStorageError(); }
   } catch (err) { if (run === preparationEpoch) error(err); }
   finally { preparationCount--; updateComposer(); }
 }
@@ -694,10 +732,19 @@ function applySubmission(threadId, result) {
       drafts.set(threadId, '');
       if (selected?.id === threadId && $('draft').value === previous.text) $('draft').value = '';
     }
-    if (Array.isArray(previous.images) && previous.images.length) {
-      const captured = new Set(previous.images.map(image => image.id));
-      attachments.set(threadId, (attachments.get(threadId) ?? []).filter(image => !captured.has(image.id)));
-      previous.images = []; // Release accepted image bytes; history uses authenticated thumbnails.
+    const captured = new Set([...(previous.imageIds ?? []), ...(previous.images ?? []).map(image => image.id)]);
+    if (captured.size) {
+      const remaining = (attachments.get(threadId) ?? []).filter(image => !captured.has(image.id));
+      if (remaining.length) attachments.set(threadId, remaining); else attachments.delete(threadId);
+      previous.images = []; previous.imageIds = [...captured];
+      // Retain the send ID until durable deletion finishes. If interrupted, a
+      // reload reconciles this send before presenting the captured images again.
+      previous.imageCleanup = true;
+      const run = preparationEpoch;
+      void saveImages(threadId).then(() => {
+        if (run !== preparationEpoch || submissions.get(threadId) !== previous) return;
+        previous.imageCleanup = false; previous.imageIds = []; persistDrafts();
+      }).catch(() => { if (run === preparationEpoch && authenticated) imageStorageError(); });
     }
   }
   persistDrafts(); updateComposer();
@@ -717,7 +764,7 @@ $('send').onclick = async () => {
   const question = selected.question;
   const expectedTurnId = selected.status.type === 'active' ? selected.latestTurn?.id : undefined;
   const threadId = selected.id, text = $('draft').value, images = [...(attachments.get(threadId) ?? [])];
-  const pending = { id: crypto.randomUUID(), threadId, text, images, state: 'sending', message: 'Sending…' };
+  const pending = { id: crypto.randomUUID(), threadId, text, images, imageIds: images.map(image => image.id), state: 'sending', message: 'Sending…' };
   drafts.set(threadId, text); submissions.set(threadId, pending); persistDrafts(); updateComposer();
   try {
     const res = await fetch(`/api/threads/${threadId}/messages`, {
@@ -854,7 +901,7 @@ function showPairing() {
   try { localStorage.removeItem(draftStorageKey); } catch {}
   try { sessionStorage.removeItem(draftStorageKey); } catch {}
   clearTimeout(pickerTimer); ++pickerGeneration; ++openIntent; pickerLoading = false; $('filter').value = '';
-  attachments.clear(); canAttachImages = false; canBrowseHistory = false; pickerScope = 'loaded'; pickerCursor = null; pickerQuery = ''; opening.clear(); preparationEpoch++;
+  attachments.clear(); attachmentRestore = undefined; void purgeSavedImages().catch(() => {}); canAttachImages = false; canBrowseHistory = false; pickerScope = 'loaded'; pickerCursor = null; pickerQuery = ''; opening.clear(); preparationEpoch++;
   pendingCreation = undefined; persistPendingCreation();
   $('draft').value = ''; $('threads').replaceChildren(); $('transcript').replaceChildren(); $('scope-all').hidden = true; $('scope-loaded').setAttribute('aria-pressed', 'true'); $('scope-all').setAttribute('aria-pressed', 'false');
   $('attachments').replaceChildren(); $('attachments').hidden = true;
@@ -868,6 +915,8 @@ async function bootstrap() {
     if (!session.authenticated) { showPairing(); return; }
     authenticated = true; $('pairing').hidden = true; $('logout').hidden = false;
     $('access-note').textContent = 'Paired device';
+    await restoreImages();
+    if (!authenticated) return;
     for (const record of await api('/api/submissions')) {
       const previous = submissions.get(record.threadId);
       if (!previous || previous.id === record.id) {

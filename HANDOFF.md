@@ -13,6 +13,8 @@ existing Codex shared daemon. Read AGENTS.md, README.md, SPEC.md, and
 - New chat in existing/new working directories, loaded and saved browsing,
   explicit saved-thread open, bounded history, SSE,
   image input, Markdown, async question replies, and active follow-ups are present.
+- Text drafts use localStorage; prepared screenshot drafts use IndexedDB on the
+  paired device and survive reload/reopen. Unpair clears both.
 - A submitted text/image/turn target is captured before navigation. Unknown writes
   reconcile by client ID; never blindly resend or fall back from steer to start.
 - Blocking approval/question requests stay visible and require the CLI.

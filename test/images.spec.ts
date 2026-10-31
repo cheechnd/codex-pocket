@@ -240,10 +240,16 @@ test('unknown image send preserves the draft and does not blindly resend; unsafe
   await expect(page.locator('#submission-status')).toContainText('Outcome unknown');
   await expect(page.locator('#check-submission')).toBeVisible();
   await expect(page.getByLabel('Message', { exact: true })).toHaveValue('keep this exact with image');
-  await expect(page.locator('#attachments img')).toHaveCount(0);
+  await expect(page.locator('#attachments img')).toHaveCount(1);
   expect(await page.evaluate(() => localStorage.getItem('pocket-drafts-v1'))).not.toContain('data:image');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   expect(isolated.requests.length).toBe(initialRequests);
+  isolated.setPending({ id: (await page.evaluate(() => JSON.parse(localStorage.getItem('pocket-drafts-v1')!).pending[0].id)), threadId: 'image-thread-1', state: 'completed', turnId: 'reconciled-image-turn' });
+  await page.getByRole('button', { name: 'Check send status', exact: true }).click();
+  await expect(page.locator('#attachments img')).toHaveCount(0);
+  await expect.poll(() => savedImages(page)).toEqual([]);
+  await page.reload(); await openThread(page, 'Image thread one', unsafeHistory);
+  await expect(page.locator('#attachments img')).toHaveCount(0);
   await expect(page.locator('#transcript img')).toHaveCount(0);
   expect(await page.evaluate(() => performance.getEntriesByType('resource').some(entry => entry.name.includes('unsafe.example.invalid')))).toBe(false);
 });
@@ -279,4 +285,90 @@ test('rejected image send keeps its draft; acceptance after navigation clears on
   await expect(page.locator('#attachments img')).toHaveCount(0);
   expect(captured.text).toBe('original exact text'); expect(captured.images).toHaveLength(1);
   expect(isolated.requests).toHaveLength(0); // More specific routes handled these sends.
+});
+
+
+async function savedImages(page: Page): Promise<any[]> {
+  return page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('pocket-attachment-drafts', 1);
+    request.onsuccess = () => {
+      const db = request.result, tx = db.transaction('drafts', 'readonly'), read = tx.objectStore('drafts').getAll();
+      tx.oncomplete = () => { db.close(); resolve(read.result); };
+      tx.onerror = () => reject(tx.error);
+    };
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+test('screenshot drafts restore by conversation, preserve previews, and clear on removal, send and unpair', async ({ page, request }) => {
+  const isolated = await installIsolatedRoutes(page); await pair(page, request); await openThread(page);
+  await page.locator('#draft').fill('  Keep this exact text\n🙂  ');
+  await page.locator('#image-input').setInputFiles([
+    { name: 'first.png', mimeType: 'image/png', buffer: png1x1 },
+    { name: 'second.png', mimeType: 'image/png', buffer: png1x1 },
+  ]);
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+  const original = (await savedImages(page))[0].images;
+  await page.reload(); await openThread(page);
+  await expect(page.locator('#attachments img')).toHaveCount(2);
+  await expect(page.locator('#draft')).toHaveValue('  Keep this exact text\n🙂  ');
+  await page.getByRole('button', { name: 'Preview image first.png', exact: true }).click();
+  await expect(page.locator('#attachment-preview-image')).toHaveAttribute('src', original[0].dataUrl);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Remove image first.png', exact: true }).click();
+  await expect.poll(async () => (await savedImages(page))[0].images.length).toBe(1);
+  await page.getByRole('button', { name: '← Conversations' }).click(); await openThread(page, 'Image thread two');
+  await expect(page.locator('#attachments img')).toHaveCount(0);
+  await page.locator('#image-input').setInputFiles({ name: 'other.png', mimeType: 'image/png', buffer: png1x1 });
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+  await page.reload(); await openThread(page);
+  await expect(page.getByRole('button', { name: 'Preview image second.png', exact: true })).toBeVisible();
+  expect(isolated.requests).toHaveLength(0);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(async () => (await savedImages(page)).map(row => row.threadId)).toEqual(['image-thread-2']);
+  expect(isolated.requests[0].body.images).toEqual([{ dataUrl: original[1].dataUrl }]);
+  await page.reload(); await openThread(page);
+  await expect(page.locator('#attachments img')).toHaveCount(0);
+  await page.getByRole('button', { name: '← Conversations' }).click(); await openThread(page, 'Image thread two');
+  await expect(page.getByRole('button', { name: 'Preview image other.png', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '← Conversations' }).click();
+  await page.getByLabel('Settings', { exact: true }).click();
+  await page.getByRole('button', { name: 'Unpair this device', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pair this device', exact: true })).toBeVisible();
+  await expect.poll(() => savedImages(page)).toEqual([]);
+});
+
+test('screenshots survive closing and reopening the browser profile without sending', async ({ playwright }) => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const profile = await mkdtemp(join(tmpdir(), 'pocket-image-drafts-'));
+  let context: Awaited<ReturnType<typeof playwright.chromium.launchPersistentContext>> | undefined;
+  const launch = async () => {
+    context = await playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH });
+    const page = context.pages()[0];
+    await page.route('**/api/session', route => route.fulfill({ json: { authenticated: true } }));
+    const isolated = await installIsolatedRoutes(page);
+    await page.goto('http://127.0.0.1:44318/'); await openThread(page);
+    return { page, isolated };
+  };
+  try {
+    let { page } = await launch();
+    await page.locator('#image-input').setInputFiles({ name: 'reopen.png', mimeType: 'image/png', buffer: png1x1 });
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+    const before = await savedImages(page);
+    await context!.close();
+    const reopened = await launch(); page = reopened.page;
+    await expect(page.getByRole('button', { name: 'Preview image reopen.png', exact: true })).toBeVisible();
+    expect(await savedImages(page)).toEqual(before);
+    expect(reopened.isolated.requests).toHaveLength(0);
+  } finally { await context?.close(); await rm(profile, { recursive: true, force: true }); }
+});
+
+test('unavailable screenshot storage keeps in-memory attachments usable and reports the limitation', async ({ page, request }) => {
+  await page.addInitScript(() => { indexedDB.open = () => { throw new DOMException('Synthetic storage denial', 'SecurityError'); }; });
+  await installIsolatedRoutes(page); await pair(page, request); await openThread(page);
+  await page.locator('#image-input').setInputFiles({ name: 'memory.png', mimeType: 'image/png', buffer: png1x1 });
+  await expect(page.getByRole('button', { name: 'Preview image memory.png', exact: true })).toBeVisible();
+  await expect(page.locator('#error')).toContainText('Screenshot drafts could not be saved');
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
 });

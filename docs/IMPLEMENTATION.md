@@ -34,7 +34,7 @@ experimental protocol compatibility is not a promise for every daemon version.
 - Validated and metadata-stripped private image storage, bounded capacity, and
   authenticated retrieval of app-owned attachments only.
 - Mobile/desktop layouts, safe Markdown rendering, message copy, persistent localStorage text
-  drafts and memory-only image drafts, browser Back/Forward, and foreground/reload reconciliation.
+  drafts and IndexedDB screenshot drafts, browser Back/Forward, and foreground/reload reconciliation.
 - Per-browser unread completion markers retain only bounded thread/turn IDs.
 
 ## Automated verification
@@ -153,18 +153,19 @@ controlled by Chrome and actual user installation remains to be confirmed.
 
 Text drafts are saved per conversation in localStorage on input and image/text
 paste, with an in-memory fallback for unavailable, malformed, or full storage.
-Only text and uncertain submission identifiers/captured text are stored; image
-bytes and transcripts are excluded. Unpairing/authentication loss removes the
+Text and uncertain submission identifiers/captured text/image IDs use
+localStorage; screenshot bytes use IndexedDB as described below. Transcripts
+are excluded. Unpairing/authentication loss removes the
 saved draft record. Confirmed acceptance clears matching submitted text, including
 confirmation restored from the server after refresh, while newer edits survive.
 Persisted uncertain attempts restore as locked outcome-unknown submissions and
 reconcile by their original IDs. A missing server ledger leaves the send locked;
-no request is retried or submitted automatically. Images still disappear on refresh.
+no request is retried or submitted automatically.
 
 Verification: 39 browser checks and 28 mock/API checks pass. Draft coverage includes
 per-conversation refresh/confirmed clearing, confirmation after refresh with and
 without newer edits, unknown-outcome reload with a missing backend ledger, unpair
-cleanup, memory fallback, and text-only restoration for an image submission.
+cleanup and memory fallback. Screenshot draft coverage is described below.
 
 
 The initial sessionStorage implementation covered refresh but did not cover
@@ -223,3 +224,19 @@ Pocket's root proxy; before/after comparison confirms only that endpoint changed
 (accounting for Tailscale omitting empty route containers). Other named services
 remain configured. No model input was sent and no application source change was
 needed; only private origin configuration and Pocket's service override changed.
+
+## Persistent screenshot drafts
+
+Prepared PNG/JPEG attachment drafts are saved per conversation in IndexedDB on
+this device. Restore them before reconciling submissions at bootstrap; reopening
+and previewing never uploads or sends. Preserve existing four-image, per-image,
+per-conversation, and 32-conversation bounds. Removing an image or unpairing clears
+saved bytes. Storage failure leaves the in-memory draft usable and reports the
+limitation. Pending sends retain captured image IDs in localStorage, without image
+bytes. Confirmed acceptance removes only those IDs, retaining the pending record
+until durable deletion finishes so refresh cannot expose accepted images as new.
+Unknown outcomes remain locked and never auto-resend, including missing ledgers.
+
+Browser checks cover per-conversation reload and full profile restart, preview
+restoration, removal, confirmed cleanup after unknown-send reconciliation, unpair,
+and unavailable storage.

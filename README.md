@@ -55,7 +55,11 @@ safe Markdown (bold, lists, links, quotes, tables and code) with copy controls. 
 including during generation, so partial and completed representations are merged
 by turn/item ID without appending overlapping deltas. Text drafts are saved per conversation in localStorage and survive refreshes
 and closing/reopening the app in the same browser. Confirmed sends clear only their captured text; newer
-edits are preserved. Unpairing clears saved drafts. Image drafts remain memory-only. Sensitive API responses use no-store.
+edits are preserved. Unpairing clears saved drafts. Screenshot drafts are saved per conversation in
+IndexedDB on this device and restored after refresh or reopening. Confirmed sends
+clear only their captured images; removal and unpairing also delete saved images.
+If browser storage is unavailable or full, Pocket reports that attachments will
+last only while the app stays open. Sensitive API responses use no-store.
 
 Switch to **All** to browse older saved conversations. Search matches saved titles;
 **Load more** fetches another 50 summaries, up to 1,000 in the browser. This view
@@ -265,7 +269,7 @@ concurrent requests. Unknown outcomes block further app sends for that thread;
 turn status, never text equality. Missing evidence stays unknown. No automatic
 POST retries occur. Server restart/expiration loses deduplication, so review the
 CLI before manually resending an uncertain instruction. Browser reload restores
-text drafts and locally recorded uncertain submission IDs, then checks the
+text and screenshot drafts and locally recorded uncertain submission IDs, then checks the
 authenticated backend without a POST retry. If the backend has lost the ledger,
 the restored attempt stays locked as outcome-unknown; check the CLI to resolve it.
 
@@ -295,7 +299,7 @@ and replace the base64 value in the `apple-touch-icon` link in
   been verified for every request type. Pocket never automatically answers them.
 - Submission deduplication is in memory and expires after one hour or restart.
   Review the CLI before resending an uncertain instruction.
-- Text drafts use persistent localStorage; unsent images remain memory-only.
+- Text drafts use localStorage; unsent screenshot drafts use IndexedDB on this device. Browser data clearing also removes drafts.
   Offline sends, push notifications, and durable server submission history are not implemented.
 - Native iPhone selection handles may be absent when selecting message text.
   Use the **Copy message** button below a bubble to copy the whole message;
